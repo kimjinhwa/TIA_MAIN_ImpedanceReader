@@ -99,11 +99,11 @@ void pinsetup()
     digitalWrite(EXT_P15_RELAY,MAIN_POWEROFF);// Moduble Power OFF
     delay(500);
     digitalWrite(CS_5940, HIGH);
-    digitalWrite(RELAY_FP_IO, P15OUTPUT_MODE);  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
+    digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
     digitalWrite(RELAY_FN_GND, SENSING_MODE   );//둘다 동시에 ON이 되는 것을 막는다.
     digitalWrite(AD5940_ISR, HIGH);
     digitalWrite(CELL485_DE, LOW);
-    digitalWrite(EXT_P15_RELAY,MAIN_POWERON);// Moduble Power OFF
+    digitalWrite(EXT_P15_RELAY,MAIN_POWEROFF);// Moduble Power OFF
     delay(500);
 };
 
@@ -251,7 +251,7 @@ void setupModbusAgentForexternal485(){
   uint8_t address_485 = systemDefaultValue.modbusId; 
 
   //external485.useStopControll =0;
-  external485.begin(Serial1,BAUDRATE,1,2000);
+  external485.begin(Serial1,115200,1,2000);
   external485.registerWorker(address_485,READ_COIL,&FC01);
   external485.registerWorker(address_485,READ_HOLD_REGISTER,&FC03);
   external485.registerWorker(address_485,READ_INPUT_REGISTER,&FC04);
@@ -468,42 +468,6 @@ bool bootingReasonCheck()
   if( resetReson != 0 ) return true;
   else return false;
 }
-// void testSerialExternal(){
-//   extendSerial.selectCellModule(true);
-//   while(1){
-//     digitalWrite(EXT_485EN_1, true);
-//     delay(10);
-//     Serial.println("Test External Serial 485 Module");
-//     Serial.flush();
-//     Serial1.println("Test External Serial 485 Module");
-//     Serial1.flush();
-//     digitalWrite(EXT_485EN_1, false);
-//     delay(10);
-//     // 읽을수 있는지를 테스트한다
-//     while (!Serial1.available()) { }
-//     if(Serial1.available()) Serial.printf("read from Serial1 %d",Serial1.read());
-//   }
-//   vTaskDelay(10);
-// }
-// void testSerialCellModule(){
-//   extendSerial.selectCellModule(true);
-//   while(1){
-//     digitalWrite(CELL485_DE, true);
-//     delay(10);
-//     Serial.println("Test Serial 485 Module");
-//     Serial.flush();
-//     Serial2.println("Test Serial 485 Module");
-//     Serial2.flush();
-//     digitalWrite(CELL485_DE, false);
-//     delay(10);
-//     while (!Serial2.available())
-//     {
-//     }
-//     Serial.printf("read from Serial2 %d",Serial2.read());
-    
-//   }
-//   vTaskDelay(10);
-// }
 void setup()
 {
 
@@ -515,18 +479,18 @@ void setup()
   Serial.begin(115200);
   // 외부 485통신에 사용한다.
   RTUutils::prepareHardwareSerial(Serial1);
-  Serial1.begin(BAUDRATE, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);
+  Serial1.begin(115200, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);
 
   String strResetReason = "System booting reason is  ";
   bool dataReload = false;
   setRtc();
   Serial.println("Flash Memory Init....Waiting....");
   lsFile.littleFsInitFast(0);
-  dataReload = bootingReasonCheck();
+  //dataReload = bootingReasonCheck();
 
   // 내부의 LCD와 셀의 온도및 릴레이를 위해 사용한다.
   RTUutils::prepareHardwareSerial(Serial2);
-  Serial2.begin(BAUDRATESERIAL2, SERIAL_8N1, SERIAL_RX2, SERIAL_TX2);
+  Serial2.begin(115200, SERIAL_8N1, SERIAL_RX2, SERIAL_TX2);
 
   extendSerial.selectLcd(); // 232통신이다
                             //  485가 enable가 된다고 해도
@@ -544,7 +508,7 @@ void setup()
 
   modbusLcdSetup();
   setupModbusAgentForexternal485();
-  modbusCellModuleSetup();
+  //modbusCellModuleSetup();
   String bleName = "TIMP_";
   String WifiAddress = WiFi.macAddress();
   bleName += WifiAddress;
@@ -636,33 +600,6 @@ void loop(void)
   void *parameters;
   esp_log_level_set("*",ESP_LOG_INFO);
   parameters = simpleCli.outputStream;
-  while (!isModuleBootingOK)
-  {
-    if (systemDefaultValue.installed_cells == 0)
-      break;
-    isModuleBootingOK = checkBooting();
-    if (isModuleBootingOK == false)
-    {
-      for (int i = 0; i < 10; i++)
-      {
-        AD5940_AGPIOToggle(AGPIO_Pin1);
-        // simpleCli.outputStream->printf("\nAGPIO_Pin1 Led Toggle");
-        delay(200);
-      }
-      digitalWrite(RELAY_FP_IO, P15OUTPUT_MODE);
-      delay(100);
-      digitalWrite(RELAY_FN_GND, SENSING_MODE);
-      delay(100);
-
-      Serial.println("Power 15V OFF");
-      digitalWrite(EXT_P15_RELAY, MAIN_POWEROFF); // Power ON Normal Close
-      delay(1000);
-      Serial.println("Power 15V ON");
-      digitalWrite(EXT_P15_RELAY, MAIN_POWERON); // Power ON Normal Close
-      delay(3000);
-      esp_task_wdt_reset();
-    }
-  }
   now = millis(); 
 
   esp_task_wdt_reset();
@@ -681,66 +618,14 @@ void loop(void)
   }
   if ((now - previous_5Secondmills > Interval_5Second) && (elaspTime % 60 ==0))
   {
-    if ((systemDefaultValue.runMode != 0) )  // 자동 모드에서만 실행한다
-                                          // 또한 매 분 실행한다.
-    {
-      for (int i = startBatnumber; i <= systemDefaultValue.installed_cells; i++)
-      {
+        esp_task_wdt_reset();
         time_t startRead = millis();
         time_t endTime ;
-        if(elaspTime==0) //처음으로 실행하는 것이면 
-          elaspTime=3590; //이렇게 해서 처음에는 전압만 읽고
-                          //다시 임피던스를 읽는 방식으로 하자.
         parameters = simpleCli.outputStream;
-        selecectedCellNumber = i-1;
-        //modbusRequestModule.addToQueue(millis(), i, READ_INPUT_REGISTER, 0, 3);
-        //TODO: 임시로 막는 다>
-        sendGetModbusModuleData(millis(), i, READ_INPUT_REGISTER, 0, 3,5); // 40mills
         endTime = millis();             // take 300ms
-        //ESP_LOGI("TIME", "Elasp time Step 1 : %ld milisecond", endTime - startRead);
-        esp_task_wdt_reset();
-        //TODO: 아래의 펑션은 MODBUS 루틴을 변경하기 위해 임시로 막는다
-        for(int retry=0;retry<10;retry++){
-          bRet = SelectBatteryMinusPlus(i);
-          if(bRet == false){
-            ESP_LOGE("BAT", "Select Battery %dth Error",i); 
-          }
-          else break;
-        }
-        endTime = millis();             // take 300ms
-        float batVoltage = 0.0;
-        batVoltage = batDevice.readBatAdcValue(i, 600);
-        if (batVoltage > 18.0)
-          batVoltage = 0.0;
-        cellvalue[i - 1].voltage = batVoltage; // 구조체에 값을 적어 넣는다
-        endTime = millis();             // take 300ms
-        //ESP_LOGI("TIME", "Elasp time Step 2 : %ld milisecond", endTime - startRead);
-        //ESP_LOGI("Voltage", "Bat(%d) Voltage is : %3.3f (%ldmilisecond)", i,batVoltage, endTime - startRead);
-        simpleCli.outputStream->printf("\ntime:%ld Bat(%i) Vol:%3.3f (%ldmili)\n",
-          elaspTime,i, batVoltage, endTime - startRead);
-        setDataToLcd(0,40); //voltage
+        simpleCli.outputStream->printf("\ntime:%ld  (%ldmili)\n",loopCount, endTime - startRead);
         vTaskDelay(10);
-        setDataToLcd(40,40);//temperature
-        vTaskDelay(10);
-        if (batVoltage > 2.0)
-        {
-          // 4는 cheating mode이다.
-          if (systemDefaultValue.runMode >= 3 && (elaspTime%3600==0)) //매시간마다 실행한다
-          {
-            AD5940_Main(parameters); 
-          }
-        }
-        checkVoltageoff(i);
-        //for(int i=0;i<40;i++)cellvalue[i].impendance = 123.56f;
-        //cellvalue[0].impendance = 123.56f*2;
-        setDataToLcd(80,40);//Impedance
-        vTaskDelay(10);
-        setDataToLcd(120,40);//tims and message
-        vTaskDelay(10);
-        if(systemDefaultValue.runMode ==0) break;
-      }
-    }
- //   globalModbusId = globalModbusId > 4 ? 1 : globalModbusId ;
+        AD5940_Main(parameters); 
     loopCount++;
     previous_5Secondmills = millis();
   }
