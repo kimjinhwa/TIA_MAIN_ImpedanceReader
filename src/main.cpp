@@ -59,6 +59,7 @@ uint16_t cellModbusIdReceived;
 ExtendSerial extendSerial;
 
 uint8_t selecectedCellNumber =0;
+volatile bool isAd5940Interrupt = false;
 
 _cell_value cellvalue[MAX_INSTALLED_CELLS];
 
@@ -70,7 +71,7 @@ BluetoothSerial SerialBT;
 BatDeviceInterface batDevice;
 
 
-void AD5940_ShutDown();
+//void AD5940_ShutDown();
 bool checkBooting();
 
 void setErrorMessageToModbus(bool setError,const char* msg);
@@ -79,7 +80,7 @@ void pinsetup()
 {
     pinMode(READ_BATVOL, INPUT);
 
-    pinMode(AD5940_ISR, INPUT);
+    pinMode(AD5940_ISR, INPUT_PULLUP);
     pinMode(SERIAL_SEL_ADDR0, OUTPUT);
     pinMode(SERIAL_SEL_ADDR1, OUTPUT);
     pinMode(SERIAL_TX2 , OUTPUT);
@@ -101,7 +102,6 @@ void pinsetup()
     digitalWrite(CS_5940, HIGH);
     digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
     digitalWrite(RELAY_FN_GND, SENSING_MODE   );//둘다 동시에 ON이 되는 것을 막는다.
-    digitalWrite(AD5940_ISR, HIGH);
     digitalWrite(CELL485_DE, LOW);
     digitalWrite(EXT_P15_RELAY,MAIN_POWEROFF);// Moduble Power OFF
     delay(500);
@@ -109,7 +109,7 @@ void pinsetup()
 
 //HardwareSerial Serial1;
 void AD5940_Main(void *parameters);
-void AD5940_Main_init();
+//void AD5940_Main_init();
 
 void wifiApmodeConfig()
 {
@@ -309,6 +309,9 @@ void initCellValue()
 }
 bool checkBooting()
 {
+  digitalWrite(RELAY_FP_IO,SENSING_MODE    );  
+  digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
+  return true;
   String msg;
   float batVoltage = 0.0;
   msg = "Now On Booting\n";
@@ -403,7 +406,7 @@ bool checkBooting()
 // 인터럽트 서비스 루틴 (ISR)
 // void IRAM_ATTR handleInterrupt() {
 //   // 인터럽트가 발생했을 때 실행될 코드
-//   Serial.println("Interrupt detected!");
+//   isAd5940Interrupt = true;
 // }
 bool bootingReasonCheck()
 {
@@ -468,14 +471,14 @@ bool bootingReasonCheck()
   if( resetReson != 0 ) return true;
   else return false;
 }
+void AD5940_();
 void setup()
 {
 
   EEPROM.begin(sizeof(nvsSystemSet) + 1);
   readnWriteEEProm();
   pinsetup();
-  // 인터럽트 핸들러를 연결
-  // attachInterrupt(digitalPinToInterrupt(AD5940_ISR), handleInterrupt, FALLING);
+  // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
   // 외부 485통신에 사용한다.
   RTUutils::prepareHardwareSerial(Serial1);
@@ -527,8 +530,7 @@ void setup()
   SPI.begin(SCK, MISO, MOSI, CS_5940);
   pinMode(SS, OUTPUT); // VSPI SS -> 아니다..이것은 리셋용이다.
 
-  AD5940_MCUResourceInit(0);
-  AD5940_Main_init();
+  simpleCli.outputStream = &Serial;
   vTaskDelay(1000);
   ESP_LOGI(TAG, "System Started at %s mode", systemDefaultValue.runMode == 0 ? "Manual" : "Auto");
   ESP_LOGI(TAG, "\nEEPROM installed Bat number %d", systemDefaultValue.installed_cells);
@@ -539,9 +541,7 @@ void setup()
 #endif
 
   xTaskCreate(blueToothTask, "blueToothTask", 5000, NULL, 1, h_pxblueToothTask);
-  ESP_LOGI(TAG, "Chip Id : %d\n", AD5940_ReadReg(REG_AFECON_CHIPID));
-  AD5940_ShutDown();
-  simpleCli.outputStream = &Serial;
+  xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
   esp_log_level_t level;
   switch (systemDefaultValue.logLevel)
   {
@@ -594,6 +594,7 @@ int16_t logForHour=0;
 uint32_t loopCount=0;
 static bool isModuleBootingOK=false;
 static long elaspTime=-1;
+int toggle=0;
 void loop(void)
 {
   bool bRet;
@@ -608,6 +609,13 @@ void loop(void)
   {
     //if(elaspTime != -1) 
     elaspTime++;
+    digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
+    digitalWrite(RELAY_FN_GND, SENSING_MODE  );  
+    toggle = toggle == 0 ? 1:0;
+    //printf("\nRelay %s ",digitalRead(P15OUTPUT_MODE)==0?"ON":"OFF");
+
+    //delay(20);
+    //digitalWrite(RELAY_FN_GND, SENSING_MODE   );
     if( elaspTime%10 ==0 )
       simpleCli.outputStream->printf("\nTime elasped : %d",elaspTime);
     previousSecondmills = now;
@@ -616,7 +624,7 @@ void loop(void)
   {
     previous_3Secondmills= now;
   }
-  if ((now - previous_5Secondmills > Interval_5Second) && (elaspTime % 60 ==0))
+  if ((now - previous_5Secondmills > Interval_5Second) )
   {
         esp_task_wdt_reset();
         time_t startRead = millis();
@@ -625,9 +633,9 @@ void loop(void)
         endTime = millis();             // take 300ms
         simpleCli.outputStream->printf("\ntime:%ld  (%ldmili)\n",loopCount, endTime - startRead);
         vTaskDelay(10);
-        AD5940_Main(parameters); 
-    loopCount++;
-    previous_5Secondmills = millis();
+        //AD5940_Main(parameters); 
+        loopCount++;
+        previous_5Secondmills = millis();
   }
   if ((now - previous_30Secondmills > Interval_30Second))
   {

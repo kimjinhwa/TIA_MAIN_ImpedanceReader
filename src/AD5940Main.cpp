@@ -26,7 +26,7 @@ Analog Devices Software License Agreement.
 #include <esp_task_wdt.h>
 #include "SimpleCLI.h"
 
-#define MAX_LOOP_COUNT 30
+#define MAX_LOOP_COUNT 100
 #define APPBUFF_SIZE 512
 
 static Print *outputStream;
@@ -135,7 +135,7 @@ int32_t BATShowResult(uint32_t *pData, uint32_t DataCount)
   for(int i=0;i<DataCount;i++)
   {
     printf("Freq: %f (real, image) = ,%6.3f , %6.3f ,%6.3f mOhm \n",freq, pImp[i].Real,pImp[i].Image,AD5940_ComplexMag(&pImp[i]));
-    outputStream->printf("Freq: %f (real, image) = ,%6.3f , %6.3f ,%6.3f mOhm \n",freq, pImp[i].Real,pImp[i].Image,AD5940_ComplexMag(&pImp[i]));
+    //outputStream->printf("Freq: %f (real, image) = ,%6.3f , %6.3f ,%6.3f mOhm \n",freq, pImp[i].Real,pImp[i].Image,AD5940_ComplexMag(&pImp[i]));
   }
   return 0;
 }
@@ -186,6 +186,8 @@ static int32_t AD5940PlatformCfg(void)
   gpio_cfg.OutputEnSet = AGPIO_Pin0|AGPIO_Pin2 | AGPIO_Pin1;
   gpio_cfg.OutVal = 0;
   gpio_cfg.PullEnSet = 0;
+  //추가
+  gpio_cfg.PullEnSet = AGPIO_Pin0;  /* AD5940 내부 풀업 - 인터럽트 라인 대기 상태 유지 */
   AD5940_AGPIOCfg(&gpio_cfg);
   AD5940_SleepKeyCtrlS(SLPKEY_UNLOCK);  /* Allow AFE to enter sleep mode. */
   //AD5940_SleepKeyCtrlS(SLPKEY_LOCK);  /* Allow AFE to enter sleep mode. */
@@ -203,7 +205,7 @@ void AD5940BATStructInit(void)
   pBATCfg->MaxSeqLen = 512;
   pBATCfg->RcalVal = 56.0;  							/* Value of RCAL on EVAL-AD5941BATZ board is 50mOhm */
   pBATCfg->ACVoltPP = 300.0f;							/* Pk-pk amplitude is 300mV */
-  pBATCfg->DCVolt = 400.0f;							/* Offset voltage of 1.2V*/
+  pBATCfg->DCVolt = 1100.0f;							/* DC bias 1100mV */
   pBATCfg->DftNum = DFTNUM_8192;
   
   pBATCfg->FifoThresh = 2;      					/* 2 results in FIFO, real and imaginary part. */
@@ -211,8 +213,8 @@ void AD5940BATStructInit(void)
 	pBATCfg->SinFreq = 5000/3;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
 	
 	pBATCfg->SweepCfg.SweepEn = bFALSE;			/* Set to bTRUE to enable sweep function */
-	pBATCfg->SweepCfg.SweepStart = 900.0f;		/* Start sweep at 1Hz  */
-	pBATCfg->SweepCfg.SweepStop = 1000.0f;	/* Finish sweep at 1000Hz */
+	pBATCfg->SweepCfg.SweepStart = 300.0f;		/* Start sweep at 1Hz  */
+	pBATCfg->SweepCfg.SweepStop = 0.0f;	/* Finish sweep at 1000Hz */
 	pBATCfg->SweepCfg.SweepPoints = 20;			/* 100 frequencies in the sweep */
 	pBATCfg->SweepCfg.SweepLog = bTRUE;			/* Set to bTRUE to use LOG scale. Set bFALSE to use linear scale */
 	
@@ -289,58 +291,63 @@ float AD5940_calibration(float *real , float *image)
   AD5940_ShutDown();
   return AD5940_ComplexMag(&AppBATCfg.RcalVolt);
 }
+void AD5940_Main(void *parameters);
+void AD5940_init(){
+  AD5940_MCUResourceInit(0);
+  AD5940_Main_init();
+  ESP_LOGI(TAG, "Chip Id : %d\n", AD5940_ReadReg(REG_AFECON_CHIPID));
+  AD5940_ShutDown();
+  //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
+}
 void AD5940_Main(void *parameters)
 {
+  AD5940_init();
   uint32_t temp;
-  //if(parameters != nullptr)
   outputStream  = static_cast<Print *>(parameters);
-
-  // AD5940PlatformCfg()
-  // AD5940BATStructInit(); /* Configure your parameters in this function */
-  // AppBATInit(AppBuff, APPBUFF_SIZE);    /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
-  //
-  //ESP_LOGI(TAG, "Chip Id : %d\n", AD5940_ReadReg(REG_AFECON_CHIPID));
-  // AppBATCfg.RcalVolt.Real = -107659;
-  // AppBATCfg.RcalVolt.Image = 112141; 
 
   AppBATCfg.RcalVolt.Real = systemDefaultValue.real_Cal;
   AppBATCfg.RcalVolt.Image = systemDefaultValue.image_Cal; 
-
-  // while (1)
-  // {
-  //   ESP_LOGI(TAG, "AppBATCtrl(BATCTRL_MRCAL, 0)\n");
-  //   time_t startTime = millis();
-  //   if (AD5940ERR_WAKEUP == AppBATCtrl(BATCTRL_MRCAL, 0))
-  //   {
-  //     ESP_LOGW(TAG, "\nWakeup Error..retry...");
-  //   }; /* Measur RCAL each point in sweep */
-  //   time_t endTime = millis();
-  //   ESP_LOGI("IMP", "RcalVolt Real Image IMP:%f\t %f\t %f (%dmills)",
-  //            AppBATCfg.RcalVolt.Real,
-  //            AppBATCfg.RcalVolt.Image,
-  //            AD5940_ComplexMag(&AppBATCfg.RcalVolt),endTime-startTime);
-  //   delay(100);
-  // };
-  //
-  //AppBATCtrl(BATCTRL_MRCAL, 0);     /* Measur RCAL each point in sweep */
-  AD5940BATStructInit();             /* Configure your parameters in this function */
-
-  AD5940Err error = AppBATInit(AppBuff, APPBUFF_SIZE); /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
-  ESP_LOGI(TAG, "AppBATInit %d %s ",error ,error == AD5940ERR_OK ?"성공":"실패");
-  //if(outputStream != nullptr)
-  outputStream->printf( "AppBATInit %d %s ",error ,error == AD5940ERR_OK ?"성공":"실패");
-  //digitalWrite(EXT_P15_RELAY,HIGH);
-  //30개를 읽고 
-  //앞의 10개는 버리고 
-  //뒤의 20개는 평균을 내서 
-  //AppBATCtrl(BATCTRL_MRCAL, 0);   
-  uint16_t loopCount ;
-  AD5940_ClrMCUIntFlag(); /* Clear this flag */
+  uint16_t loopCount=0 ;
   AppBATCtrl(BATCTRL_START, 0);
-  for(loopCount =0;loopCount < MAX_LOOP_COUNT ;loopCount++ )
+  while(1){
+    if(loopCount == MAX_LOOP_COUNT-1)loopCount =0;
+    time_t startTime = millis();
+    printf("\n....ad5940");
+    esp_task_wdt_reset();
+    while(!AD5940_GetMCUIntFlag())
+    {
+      delay(100);
+      if (millis() - startTime > 3000)
+      {
+        ESP_LOGW(TAG, "Time out reached %d", millis() - startTime);
+        break; 
+      }
+    }
+    ESP_LOGW(TAG, "Interrupt Occured", millis() - startTime);
+    if(AD5940_GetMCUIntFlag())
+    {
+      ESP_LOGI(TAG, "Reading Impedance(%d)",MAX_LOOP_COUNT - loopCount);
+      AD5940_AGPIOToggle(AGPIO_Pin1); // LED ON OFF
+      AD5940_INTCClrFlag(AFEINTSRC_ALLINT);
+      AD5940_ClrMCUIntFlag(); /* Clear this flag */
+      temp = APPBUFF_SIZE;
+      AD5940_INTCCfg(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH, bTRUE);
+      AppBATISR(AppBuff, &temp); /* Deal with it and provide a buffer to store data we got */
+      delay(100);
+      // AD5940_Delay10us(100000);
+      addResult(AppBuff, loopCount);
+      BATShowResult(AppBuff, temp); /* Print measurement results over UART */
+      AD5940_SEQMmrTrig(SEQID_0);   /* Trigger next measurement ussing MMR write*/
+    }
+    loopCount++;
+    delay(1000);
+  }
+
+  //for(loopCount =0;loopCount < MAX_LOOP_COUNT ;loopCount++ )
+  printf("----AD5940_Main start----\n");
+  for(;;)
   {
     /* Check if interrupt flag which will be set when interrupt occurred. */
-    time_t startTime = millis();
     //esp_task_wdt_reset();
 
     // while (AD5940_INTCTestFlag(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH) == bFALSE)
@@ -348,32 +355,7 @@ void AD5940_Main(void *parameters)
     //   if( millis()-startTime > 1000){ESP_LOGW(TAG, "Time out reached %d",millis()-startTime);break;} 
     // } ;
 
-    while(!AD5940_GetMCUIntFlag())
-    {
-      delay(100);
-      if (millis() - startTime > 3000)
-      {
-        ESP_LOGW(TAG, "Time out reached %d", millis() - startTime);
-        return ; 
-      }
-    }
-    if(AD5940_GetMCUIntFlag())
-    {
-      ESP_LOGI(TAG, "Reading Impedance(%d)",MAX_LOOP_COUNT - loopCount);
-      AD5940_AGPIOToggle(AGPIO_Pin1);
-      AD5940_INTCClrFlag(AFEINTSRC_ALLINT);
-      AD5940_ClrMCUIntFlag(); /* Clear this flag */
-      temp = APPBUFF_SIZE;
-      AD5940_INTCCfg(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH, bTRUE);
-      AppBATISR(AppBuff, &temp); /* Deal with it and provide a buffer to store data we got */
-      AD5940_Delay10us(100000);
-      addResult(AppBuff, loopCount);
-      BATShowResult(AppBuff, temp); /* Print measurement results over UART */
-      //if(outputStream != nullptr)
-      //BATShowResultBLE(AppBuff, temp); /* Print measurement results over UART */
-
-      AD5940_SEQMmrTrig(SEQID_0);   /* Trigger next measurement ussing MMR write*/
-    }
+    //while(!AD5940_GetMCUIntFlag())
   }
 }
 

@@ -800,8 +800,9 @@ void SimpleCLI::setOutputStream(Print *outputStream ){
 void SimpleCLI::setInputStream(Stream *inputStream ){
         this->inputStream = inputStream ;
 }
-SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize,Print *outputStream ) : commandQueueSize(commandQueueSize), errorQueueSize(errorQueueSize) {
-  this->inputStream = &Serial;
+SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize, Print *outputStream) : commandQueueSize(commandQueueSize), errorQueueSize(errorQueueSize) {
+  this->inputStream = (inputStream != nullptr) ? inputStream : &Serial;
+  this->outputStream = (outputStream != nullptr) ? outputStream : &Serial;
   Command cmd_config = addCommand("ls",ls_configCallback);
   cmd_config.setDescription(" File list \r\n ");
   cmd_config =  addSingleArgCmd("cat", cat_configCallback);
