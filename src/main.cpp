@@ -643,13 +643,6 @@ void loop(void)
   }
   if ((now - previous_60Secondmills > Interval_60Second))
   {
-    // gettimeofday(&tmv, NULL);
-    // struct tm *timeinfo = gmtime(&tmv.tv_sec);
-    // simpleCli.outputStream->printf("\r\nEveryMinute reached  ... %d %d %d",timeinfo->tm_min,logForHour,timeinfo->tm_hour);
-    // if(logForHour != timeinfo->tm_hour){ //매시간마다 로그를 기록한다.
-    //   logForHour = timeinfo->tm_hour;
-    //   lsFile.writeCellDataLog();
-    //}
     previous_60Secondmills= now;
   }
   vTaskDelay(100);

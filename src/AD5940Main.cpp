@@ -68,7 +68,7 @@ void addResult(uint32_t *pData, uint32_t DataCount)
       Average.Image /= 2.0;
     }
     ESP_LOGI("AVERAGE", "Average(real, image) = , %3.3f ,%3.3f ,%3.3f mOhm \n", Average.Real, Average.Image, AD5940_ComplexMag(&Average));
-    outputStream->printf("\nAverage(real, image) = , %3.3f ,%3.3f ,%3.3f mOhm \n", Average.Real, Average.Image, AD5940_ComplexMag(&Average));
+    //outputStream->printf("\nAverage(real, image) = , %3.3f ,%3.3f ,%3.3f mOhm \n", Average.Real, Average.Image, AD5940_ComplexMag(&Average));
     // 보정값을 적용하여 주자
     float readImpdance ;
     readImpdance =  AD5940_ComplexMag(&Average);
@@ -303,7 +303,7 @@ void AD5940_Main(void *parameters)
 {
   AD5940_init();
   uint32_t temp;
-  outputStream  = static_cast<Print *>(parameters);
+  outputStream  = &Serial;//static_cast<Print *>(parameters);
 
   AppBATCfg.RcalVolt.Real = systemDefaultValue.real_Cal;
   AppBATCfg.RcalVolt.Image = systemDefaultValue.image_Cal; 
@@ -312,7 +312,6 @@ void AD5940_Main(void *parameters)
   while(1){
     if(loopCount == MAX_LOOP_COUNT-1)loopCount =0;
     time_t startTime = millis();
-    printf("\n....ad5940");
     esp_task_wdt_reset();
     while(!AD5940_GetMCUIntFlag())
     {
@@ -326,7 +325,6 @@ void AD5940_Main(void *parameters)
     ESP_LOGW(TAG, "Interrupt Occured", millis() - startTime);
     if(AD5940_GetMCUIntFlag())
     {
-      ESP_LOGI(TAG, "Reading Impedance(%d)",MAX_LOOP_COUNT - loopCount);
       AD5940_AGPIOToggle(AGPIO_Pin1); // LED ON OFF
       AD5940_INTCClrFlag(AFEINTSRC_ALLINT);
       AD5940_ClrMCUIntFlag(); /* Clear this flag */
