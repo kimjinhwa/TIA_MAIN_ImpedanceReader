@@ -4851,6 +4851,7 @@ void      AD5940_INTCCfg(uint32_t AfeIntcSel, uint32_t AFEIntSrc, BoolFlag State
 uint32_t  AD5940_INTCGetCfg(uint32_t AfeIntcSel);
 void      AD5940_INTCClrFlag(uint32_t AfeIntSrcSel);
 BoolFlag  AD5940_INTCTestFlag(uint32_t AfeIntcSel, uint32_t AfeIntSrcSel); /* Check if selected interrupt happened */
+AD5940Err AD5940_WaitInterruptTimeout(uint32_t AfeIntcSel, uint32_t AfeIntSrcSel, uint32_t TimeoutMs);
 uint32_t  AD5940_INTCGetFlag(uint32_t AfeIntcSel); /* Get current INTC interrupt flag */
 /* 7.3 GPIO */
 void      AD5940_AGPIOCfg(AGPIOCfg_Type *pAgpioCfg);

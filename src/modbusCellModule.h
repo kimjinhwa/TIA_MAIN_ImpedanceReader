@@ -13,14 +13,6 @@ using std::queue;
 #define CELLOFF 0x0000
 #define CELLON 0xFF00
 
-void modbusCellModuleSetup();
-bool SelectBatteryMinusPlus(uint8_t modbusId);
-bool checkVoltageoff(uint8_t modbusID);
-int readModuleRelayStatus(uint8_t modbusId,uint16_t retryCount);
-bool CellOnOff(uint8_t modbusId, uint16_t relay, uint16_t onoff);
-
-
-uint32_t sendGetModbusModuleData(uint32_t token,uint8_t modbusId, uint8_t fCode,uint16_t startAddress, uint16_t data,int retryCount);
 typedef struct
 {
     uint16_t modbusId;
@@ -160,19 +152,6 @@ public:
     if (requestModuleQueue.size())
     {
       pop();
-      ESP_LOGI("MUTEX", "%d %d  %d %d %d ",
-               reqEntry.address,
-               reqEntry.func,
-               reqEntry.lendata,
-               reqEntry.modbusID,
-               reqEntry.token);
-      sendGetModbusModuleData(
-          reqEntry.token,
-          reqEntry.modbusID,
-          reqEntry.func,
-          reqEntry.address,
-          reqEntry.lendata,5);
-      delay(50);
     }
   };
   void addAll()

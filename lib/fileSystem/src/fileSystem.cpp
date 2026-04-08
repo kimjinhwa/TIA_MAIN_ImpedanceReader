@@ -3,8 +3,6 @@
 #include <esp_spiffs.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <RtcDS1302.h>
-extern RtcDS1302<ThreeWire> Rtc;
 // fnmatch defines
 #define FNM_NOMATCH 1        // Match failed.
 #define FNM_NOESCAPE 0x01    // Disable backslash escaping.
@@ -456,28 +454,8 @@ String getTimeString(time_t tTime){
 int LittleFileSystem::writeLogString(String log)
 {
   timeval tmv;
-  // gettimeofday(&tmv, NULL);
-  // struct tm *timeinfo = gmtime(&tmv.tv_sec);
-  // String strLog = getTimeString(tmv.tv_sec);
   String strLog;
   char timeString[30];
-  RtcDateTime now = Rtc.GetDateTime();
-  sprintf(timeString,"%04d-%02d-%02d %0d:%02d:%02d",
-    now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-  strLog = timeString;
-
-  strLog += log;
-  strLog += "\r\n";
-  outputStream->println(strLog);
-
-  FILE *fp;
-  fp = fopen("/spiffs/systemlog.txt", "a+");
-  if(fp == NULL){
-    outputStream->printf("\nLogFile Open Error");
-    return -1;
-  };
-  fwrite((char *)strLog.c_str(),1,strLog.length(),fp);
-  fclose(fp);
   return 0;
 }
 

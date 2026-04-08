@@ -2685,6 +2685,24 @@ BoolFlag AD5940_INTCTestFlag(uint32_t AfeIntcSel, uint32_t AfeIntSrcSel)
   else
     return bFALSE;
 }
+AD5940Err AD5940_WaitInterruptTimeout(uint32_t AfeIntcSel, uint32_t AfeIntSrcSel, uint32_t TimeoutMs)
+{
+  uint32_t wait_count = 0;
+  
+  // 플래그가 bTRUE가 될 때까지 반복
+  while(AD5940_INTCTestFlag(AfeIntcSel, AfeIntSrcSel) == bFALSE)
+  {
+    AD5940_Delay10us(100); // 1ms 대기 (플랫폼의 딜레이 함수 사용)
+    wait_count++;
+    
+    if(wait_count >= TimeoutMs)
+    {
+      printf("Error: AD5940 Interrupt Timeout! (Source: 0x%X)\n", AfeIntSrcSel);
+      return AD5940ERR_TIMEOUT; // 에러 정의 필요
+    }
+  }
+  return AD5940ERR_OK;
+}
 
 /**
  * @brief return register value of REG_INTC_INTCFLAGx

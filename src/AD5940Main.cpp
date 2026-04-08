@@ -36,10 +36,10 @@ char TAG[] = "AD5940";
 extern uint8_t selecectedCellNumber ;
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 /* It's your choice here how to do with the data. Here is just an example to print them to UART */
-extern int measuredImpedance_1[20];
-extern int measuredImpedance_2[20];
-extern int measuredVoltage_1[20];
-extern int measuredVoltage_2[20];
+extern const int measuredImpedance_1[20];
+extern const int measuredImpedance_2[20];
+extern const int measuredVoltage_1[20];
+extern const int measuredVoltage_2[20];
 extern SimpleCLI simpleCli;
 fImpCar_Type pImpResult[MAX_LOOP_COUNT +1];
 
@@ -204,20 +204,22 @@ void AD5940BATStructInit(void)
   pBATCfg->SeqStartAddr = 0;
   pBATCfg->MaxSeqLen = 512;
   pBATCfg->RcalVal = 56.0;  							/* Value of RCAL on EVAL-AD5941BATZ board is 50mOhm */
-  pBATCfg->ACVoltPP = 300.0f;							/* Pk-pk amplitude is 300mV */
-  pBATCfg->DCVolt = 1100.0f;							/* DC bias 1100mV */
+  pBATCfg->ACVoltPP = 100.0f;							/* Pk-pk amplitude is 300mV */
+  pBATCfg->DCVolt = 100.0f;							/* DC bias 1100mV */
   pBATCfg->DftNum = DFTNUM_8192;
   
   pBATCfg->FifoThresh = 2;      					/* 2 results in FIFO, real and imaginary part. */
 	
-	pBATCfg->SinFreq = 5000/3;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
+	pBATCfg->SinFreq = 3000/3;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
 	
 	pBATCfg->SweepCfg.SweepEn = bFALSE;			/* Set to bTRUE to enable sweep function */
 	pBATCfg->SweepCfg.SweepStart = 300.0f;		/* Start sweep at 1Hz  */
 	pBATCfg->SweepCfg.SweepStop = 0.0f;	/* Finish sweep at 1000Hz */
 	pBATCfg->SweepCfg.SweepPoints = 20;			/* 100 frequencies in the sweep */
 	pBATCfg->SweepCfg.SweepLog = bTRUE;			/* Set to bTRUE to use LOG scale. Set bFALSE to use linear scale */
-	
+	ESP_LOGI(TAG,"pBATCfg->SinFreq %f",pBATCfg->SinFreq );
+	ESP_LOGI(TAG,"pBATCfg->ACVoltPP %f",pBATCfg->ACVoltPP);
+	ESP_LOGI(TAG,"pBATCfg->DCVolt  %f",pBATCfg->DCVolt  );
 }
 void AD5940_ShutDown(){
   AppBATCtrl(BATCTRL_SHUTDOWN,0);
@@ -247,13 +249,7 @@ void AD5940_Main_init()
 */
 float AD5940_calibration(float *real , float *image)
 {
-  bool SelectBatteryMinusPlus(uint8_t modbusId);
-  bool bRet = SelectBatteryMinusPlus(1);
-  if (bRet == false)
-  {
-    ESP_LOGE("BAT", "\nSelect %dth Battery For calibratiron  Error", 1);
-  }
-  uint16_t loopCount = 100;
+  uint16_t loopCount = 10;
   AD5940PlatformCfg();
   AD5940BATStructInit();             /* Configure your parameters in this function */
   AppBATInit(AppBuff, APPBUFF_SIZE); /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
@@ -296,7 +292,7 @@ void AD5940_init(){
   AD5940_MCUResourceInit(0);
   AD5940_Main_init();
   ESP_LOGI(TAG, "Chip Id : %d\n", AD5940_ReadReg(REG_AFECON_CHIPID));
-  AD5940_ShutDown();
+  //AD5940_ShutDown();
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
 }
 void AD5940_Main(void *parameters)
@@ -308,22 +304,37 @@ void AD5940_Main(void *parameters)
   AppBATCfg.RcalVolt.Real = systemDefaultValue.real_Cal;
   AppBATCfg.RcalVolt.Image = systemDefaultValue.image_Cal; 
   uint16_t loopCount=0 ;
+
+  float real , image;
+  float ImpMagnitude = AD5940_calibration(&real,&image);
+
   AppBATCtrl(BATCTRL_START, 0);
   while(1){
+
     if(loopCount == MAX_LOOP_COUNT-1)loopCount =0;
     time_t startTime = millis();
     esp_task_wdt_reset();
-    while(!AD5940_GetMCUIntFlag())
-    {
-      delay(100);
-      if (millis() - startTime > 3000)
-      {
+    uint32_t timeout = 100000; // 적절한 카운트 설정
+    while(AD5940_INTCTestFlag(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH) == bFALSE) {
+      timeout--;
+      if(timeout == 0) {
+        // 에러 처리 로직 (예: 시스템 리셋 또는 에러 메시지 출력)
         ESP_LOGW(TAG, "Time out reached %d", millis() - startTime);
-        break; 
+        break;
       }
     }
-    ESP_LOGW(TAG, "Interrupt Occured", millis() - startTime);
-    if(AD5940_GetMCUIntFlag())
+    // while(!AD5940_GetMCUIntFlag())
+    // {
+    //   delay(100);
+    //   if (millis() - startTime > 3000)
+    //   {
+    //     ESP_LOGW(TAG, "Time out reached %d", millis() - startTime);
+    //     break; 
+    //   };
+    //   //ESP_LOGW(TAG, "retry %d", millis() - startTime);
+    // }
+    ESP_LOGW(TAG, "Interrupt Occured(%dms)", millis() - startTime);
+    //if(AD5940_GetMCUIntFlag())
     {
       AD5940_AGPIOToggle(AGPIO_Pin1); // LED ON OFF
       AD5940_INTCClrFlag(AFEINTSRC_ALLINT);

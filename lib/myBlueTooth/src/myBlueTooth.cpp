@@ -29,7 +29,6 @@ extern BluetoothSerial SerialBT;
 //   // struct tm *timeinfo = gmtime(&tmv.tv_sec);
 //   // now =  RtcDateTime (tmv.tv_sec); //
 //   //struct timeval tmv;
-//   now = getDs1302GetRtcTime();
 //   outputStream->printf("\nnow is to %d/%d/%d %d:%d:%d ",now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
 //   //tmv.tv_usec = now.TotalSeconds();
 
@@ -38,8 +37,6 @@ extern BluetoothSerial SerialBT;
 //     strValue = arg.getValue();
 //     outputStream->printf("\nTime will Set to %d/%d/%d %d:%d:%d ",strValue.toInt(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
 //     now = RtcDateTime(strValue.toInt(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-//     setRtcNewTime(now);
-//     now = getDs1302GetRtcTime();
 //     outputStream->printf("\nNow New time is set to %d/%d/%d %d:%d:%d ",now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
 //     return ;
 //   }
@@ -47,28 +44,24 @@ extern BluetoothSerial SerialBT;
 //   if(arg.isSet()){
 //     strValue = arg.getValue();
 //     now = RtcDateTime(now.Year(),strValue.toInt(),now.Day(),now.Hour(),now.Minute(),now.Second());
-//     setRtcNewTime(now);
 //     return ;
 //   }
 //   arg = cmd.getArgument("day");
 //   if(arg.isSet()){
 //     strValue = arg.getValue();
 //     now = RtcDateTime(now.Year(),now.Month(),strValue.toInt(),now.Hour(),now.Minute(),now.Second());
-//     setRtcNewTime(now);
 //     return ;
 //   }
 //   arg = cmd.getArgument("hour");
 //   if(arg.isSet()){
 //     strValue = arg.getValue();
 //     now = RtcDateTime(now.Year(),now.Month(),now.Day(),strValue.toInt(),now.Minute(),now.Second());
-//     setRtcNewTime(now);
 //     return ;
 //   }
 //   arg = cmd.getArgument("minute");
 //   if(arg.isSet()){
 //     strValue = arg.getValue();
 //     now = RtcDateTime(now.Year(),now.Month(),now.Day(),now.Hour(),strValue.toInt(),now.Second());
-//     setRtcNewTime(now);
 //     return ;
 //   }
 //   arg = cmd.getArgument("second");

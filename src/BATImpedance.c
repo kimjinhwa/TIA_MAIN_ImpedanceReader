@@ -227,7 +227,9 @@ static AD5940Err AppBATSeqCfgGen(void)
   hs_loop.HsTiaCfg.HstiaRtiaSel = HSTIARTIA_10K;
 
   hs_loop.SWMatCfg.Dswitch = SWD_CE0;
+  // 여기를 바꾼다. 
   hs_loop.SWMatCfg.Pswitch = SWP_AIN1;
+  //hs_loop.SWMatCfg.Pswitch = SWP_RE0;
   hs_loop.SWMatCfg.Nswitch = SWN_AIN0;  //AIN0 is connected to AIN4 externally by JP3.
   hs_loop.SWMatCfg.Tswitch = 0; //T switch is not used.
 
@@ -664,7 +666,10 @@ AD5940Err AppBATMeasureRCAL(void)
 	}else
 	{
 		AD5940_SEQMmrTrig(SEQID_0); //여기서 DAC출력은 종료된다.
+    //
+    AD5940_AGPIOToggle(AGPIO_Pin1); // LED ON OFF
 		while(AD5940_INTCTestFlag(AFEINTC_1, AFEINTSRC_DATAFIFOTHRESH) == bFALSE);
+
 		AppBATISR(buff, &temp);
 	}
 	AD5940_INTCCfg(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH, bTRUE);

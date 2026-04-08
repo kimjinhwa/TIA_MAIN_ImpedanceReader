@@ -6,7 +6,6 @@
 #include "modbusCellModule.h"
 #include <ModbusClientRTU.h>
 
-void setRtcNewTime(RtcDateTime rtc);
 ModbusMessage  syncRequestCellModule(uint32_t token,uint8_t modbusId, uint8_t fCode,uint16_t startAddress, uint16_t len);
 
 char strErrorMessage[40];
@@ -383,11 +382,6 @@ ModbusMessage FC06(ModbusMessage request)
     default:
       break;
     }
-
-    tmv.tv_sec = now.TotalSeconds();
-    tmv.tv_usec = 0;
-    settimeofday(&tmv, NULL);
-    setRtcNewTime(now);
   }
   if (writeAddress >= 126 && writeAddress < 132)
   {

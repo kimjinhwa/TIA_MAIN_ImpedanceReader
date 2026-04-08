@@ -16,7 +16,6 @@
 #include <BluetoothSerial.h>
 #include "myBlueTooth.h"
 #include "NetworkTask.h"
-#include <RtcDS1302.h>
 #include "ModbusClientRTU.h"
 #include "modbusRtu.h"
 #include "batDeviceInterface.h"
@@ -38,8 +37,6 @@
 
 #define NUM_VALUES 21
 
-#define SELECT_LCD do {digitalWrite(SERIAL_SEL_ADDR0,HIGH);digitalWrite(SERIAL_SEL_ADDR1,LOW); }while(0)
-// //SPIClass * vspi = NULL;
 
 //SPIClass SPI;
 static const int spiClk = 1000000; // 1 MHz
@@ -48,8 +45,6 @@ static char TAG[] ="Main";
 TaskHandle_t *h_pxblueToothTask;
 TaskHandle_t *h_pxNetworkTask;
 nvsSystemSet systemDefaultValue;
-ThreeWire myWire(13, 14, 33); // IO, SCLK, CE
-RtcDS1302<ThreeWire> Rtc(myWire);
 
 ModbusServerRTU external485(2000,EXT_485EN_1);
 
@@ -72,44 +67,41 @@ BatDeviceInterface batDevice;
 
 
 //void AD5940_ShutDown();
-bool checkBooting();
-
-void setErrorMessageToModbus(bool setError,const char* msg);
 
 void pinsetup()
 {
     pinMode(READ_BATVOL, INPUT);
+    pinMode(AD5940_ISR, INPUT);
 
-    pinMode(AD5940_ISR, INPUT_PULLUP);
-    pinMode(SERIAL_SEL_ADDR0, OUTPUT);
-    pinMode(SERIAL_SEL_ADDR1, OUTPUT);
-    pinMode(SERIAL_TX2 , OUTPUT);
-    pinMode(LED_OP, OUTPUT);
-    pinMode(RELAY_FP_IO, OUTPUT);
-    pinMode(RELAY_FN_GND, OUTPUT);
-
-    pinMode(RTC1305_EN, OUTPUT);
-    pinMode(EXT_P15_RELAY, OUTPUT);
-    pinMode(CS_5940, OUTPUT);
     pinMode(EXT_485EN_1, OUTPUT);
-    pinMode(RESET_N, OUTPUT);
-    pinMode(RESET_5940, OUTPUT);
-    pinMode(CELL485_DE, OUTPUT);
+    digitalWrite(EXT_485EN_1, LOW);
+    pinMode(RST_5940, OUTPUT);
+    digitalWrite(RST_5940, HIGH);
 
+    pinMode(RS_485ADD1, OUTPUT);
+    digitalWrite(RST_5940, HIGH);
+    pinMode(RS_485ADD2, OUTPUT);
+    digitalWrite(RST_5940, HIGH);
 
-    digitalWrite(EXT_P15_RELAY,MAIN_POWEROFF);// Moduble Power OFF
-    delay(500);
+    pinMode(ADS1220_CS, OUTPUT);
+    pinMode(A23S08_CS, OUTPUT);
+    pinMode(PORT3, OUTPUT); // NOT USE
+    pinMode(ADS1220_CS, OUTPUT);
+    pinMode(ADS1220_DR, OUTPUT);
+    pinMode(PORT5, OUTPUT);  //NOT USE
+    digitalWrite(ADS1220_CS, HIGH);
+    digitalWrite(A23S08_CS, LOW);
+    digitalWrite(ADS1220_CS, HIGH);
+    digitalWrite(ADS1220_DR, LOW);
+    digitalWrite(PORT3, HIGH); //NOT USE
+    digitalWrite(PORT5, HIGH); //NOT USE
+
+    pinMode(CS_5940, OUTPUT);
     digitalWrite(CS_5940, HIGH);
-    digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
-    digitalWrite(RELAY_FN_GND, SENSING_MODE   );//둘다 동시에 ON이 되는 것을 막는다.
-    digitalWrite(CELL485_DE, LOW);
-    digitalWrite(EXT_P15_RELAY,MAIN_POWEROFF);// Moduble Power OFF
-    delay(500);
-};
-
-//HardwareSerial Serial1;
+    pinMode(RST_5940, OUTPUT);
+    digitalWrite(RST_5940, HIGH);
+}
 void AD5940_Main(void *parameters);
-//void AD5940_Main_init();
 
 void wifiApmodeConfig()
 {
@@ -155,97 +147,6 @@ void readnWriteEEProm()
   startBatnumber = 1;
 }
 
-void setRtcNewTime(RtcDateTime rtc){
-  digitalWrite(CS_5940, HIGH);
-  SPI.end();
-  Rtc.Begin();
-  vTaskDelay(1);
-  if (!Rtc.GetIsRunning())
-  {
-    printf("RTC was not actively running, starting now\r\n");
-    Rtc.SetIsRunning(true);
-  }
-  else 
-    printf("RTC was actively status running \r\n");
-  Rtc.SetDateTime(rtc);
-  myWire.end();
-  SPI.begin(SCK,MISO,MOSI,CS_5940);
-}
-RtcDateTime getDs1302GetRtcTime(){
-  digitalWrite(CS_5940, HIGH);
-  SPI.end();
-  Rtc.Begin();
-  if (!Rtc.GetIsRunning())
-  {
-    printf("RTC was not actively running, starting now\r\n");
-    Rtc.SetIsRunning(true);
-  }
-  else 
-    printf("RTC was actively status running \r\n");
-  vTaskDelay(1);
-  RtcDateTime nowTime = Rtc.GetDateTime();
-  myWire.end();
-  vTaskDelay(1);
-  SPI.begin(SCK,MISO,MOSI,CS_5940);
-  return nowTime;
-}
-void setRtc()
-{
-  Rtc.Begin();
-  RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
-  printf("\r\ncompiled time is %d/%d/%d %d:%d:%d\r\n",compiled.Year(),compiled.Month(),compiled.Day(),compiled.Hour(),compiled.Minute(),compiled.Second());
-  if (!Rtc.IsDateTimeValid())
-  {
-    printf("RTC lost confidence in the DateTime!\r\n");
-    //Rtc.SetDateTime(compiled);
-  }
-  else 
-    printf("RTC available in the DateTime!\r\n");
-  if (Rtc.GetIsWriteProtected())
-  {
-    printf("RTC was write protected, enabling writing now\r\n");
-    Rtc.SetIsWriteProtected(false);
-  }
-  else 
-    printf("RTC enabling writing \r\n");
-  if (!Rtc.GetIsRunning())
-  {
-    printf("RTC was not actively running, starting now\r\n");
-    Rtc.SetIsRunning(true);
-  }
-  else 
-    printf("RTC was actively status running \r\n");
-  if (!Rtc.GetIsRunning())
-  {
-    printf("RTC was not actively running, starting now\r\n");
-    Rtc.SetIsRunning(true);
-  }
-  else 
-    printf("RTC was actively status running \r\n");
-
-  RtcDateTime now = Rtc.GetDateTime();
-  printf("\r\nnow time is %d/%d/%d %d:%d:%d\r\n",now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-  if (now < compiled)
-  {
-    printf("\r\nSet data with compiled time"); //Rtc.SetDateTime(compiled);
-    Rtc.SetDateTime(compiled);
-  }
-  struct timeval tmv;
-  tmv.tv_sec = now.TotalSeconds();
-  tmv.tv_usec = 0;
-  //time_t toUnixTime = now.Unix32Time();
-  //시스템의 시간도 같이 맞추어 준다.
-  settimeofday(&tmv, NULL);
-  gettimeofday(&tmv, NULL);
-  now = RtcDateTime(tmv.tv_sec);
-  //now = tmv.tv_sec;
-  printf("\r\nset and reread time is %d/%d/%d %d:%d:%d\r\n",now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-
-  myWire.end();
-}
-  
-  
-
 void setupModbusAgentForexternal485(){
   //address는 항상 1이다.
   uint8_t address_485 = systemDefaultValue.modbusId; 
@@ -268,25 +169,25 @@ void setupModbusAgentForexternal485(){
 * 
 */
 
-int measuredImpedance_1[20]={
+const int  measuredImpedance_1[20]={
     267,265,292,255,271,
     274,383,307,277,272,
     262,267,294,278,270,
     285,259,289,262,254
   };
-int measuredImpedance_2[20]={
+const int measuredImpedance_2[20]={
     334,337,349,340,345,
     334,331,350,337,339,
     334,332,349,337,328,
     343,341,358,330,334
   };
-int measuredVoltage_1[20]={
+const int measuredVoltage_1[20]={
     1351,1321,1317,1311,1314,
     1320,1322,1320,1321,1320,
     1325,1339,1338,1338,1344,
     1353,1343,1359,1343,1352
   };
-int measuredVoltage_2[20]={
+const int measuredVoltage_2[20]={
     1339,1340,1340,1339,1338,
     1335,1335,1336,1336,1335,
     1334,1334,1333,1334,1334,
@@ -307,170 +208,11 @@ void initCellValue()
     }
   }
 }
-bool checkBooting()
-{
-  digitalWrite(RELAY_FP_IO,SENSING_MODE    );  
-  digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
-  return true;
-  String msg;
-  float batVoltage = 0.0;
-  msg = "Now On Booting\n";
-  setErrorMessageToModbus(true,msg.c_str());
-  setDataToLcd(120,40);//tims and message
-  int moduleState1;
-  simpleCli.outputStream->printf("\nWaiting For Module Booting\n");
-  //ESP_LOGI(TAG, "\nWaiting For Module Booting");
-  msg = "Check Step 1\n";
-  setErrorMessageToModbus(true,msg.c_str());
-  setDataToLcd(120,40);//tims and message
-  for (int i = startBatnumber; i <= systemDefaultValue.installed_cells + 1; i++){
-    if( startBatnumber == 1 )
-      moduleState1 = readModuleRelayStatus(i,5);
-    else 
-      moduleState1 = readModuleRelayStatus(i,10);
-    msg ="\nMod ";
-    msg += i;msg += " Boot State "; msg += moduleState1;
-
-    //batVoltage = batDevice.readBatAdcValueExt(10);
-    //msg +=" Vol:";msg +=batVoltage ;
-
-    simpleCli.outputStream->printf(msg.c_str());
-    if (moduleState1 != 8){
-      ESP_LOGI(TAG, "setErrorMessageToModbus-------->%s",msg);
-      setErrorMessageToModbus(true,msg.c_str());
-      setDataToLcd(120,40);//tims and message 모드버스를 이용해서 데이타를 전송한다>
-      delay(1000);
-      return false;
-    }
-    else {
-      setErrorMessageToModbus(false,"");
-    }
-  }
-  digitalWrite(RELAY_FP_IO,SENSING_MODE    );  
-  //이것은  IO0에 연결되어 있으며 서부모듈의 릴레이 2에 해당한다
-  // 즉 1를 출력하면 릴레이는 메인보드의 Relay는 ON이 되고, 
-  // 이에 따라 SENSE+와 F+에는 신호가 전달되며,
-  // 서브모듈의 IO0는 High를 출력받아 부팅을 할 수 있는 상태가 된다. 
-  delay(100);
-  digitalWrite(RELAY_FN_GND, P15OUTPUT_MODE);
-  delay(100);
-  for (int i = startBatnumber; i <= systemDefaultValue.installed_cells + 1; i++){
-    moduleState1 = readModuleRelayStatus(i,10);
-    msg ="\nMod ";
-    msg += i;msg += " Second test " ; msg += moduleState1;
-
-    batVoltage = batDevice.readBatAdcValueExt(10);
-    msg +=" Vol:";msg +=batVoltage ;
-    simpleCli.outputStream->printf(msg.c_str());
-    if(moduleState1 != 4){
-      setErrorMessageToModbus(true,msg.c_str());
-      setDataToLcd(120,40);//tims and message 모드버스를 이용해서 데이타를 전송한다>
-      delay(3000);
-      i = 1;
-    }
-  }
-
-  msg = "Check Step 3\n";
-  setErrorMessageToModbus(true,msg.c_str());
-  setDataToLcd(120,40);//tims and message
-
-  digitalWrite(RELAY_FP_IO,SENSING_MODE    );  
-  delay(20);
-  digitalWrite(RELAY_FN_GND,SENSING_MODE    );
-  delay(100);
-  for (int i = startBatnumber; i <= systemDefaultValue.installed_cells + 1; i++){
-    moduleState1 = readModuleRelayStatus(i,10);
-    msg ="\nMod ";
-    msg += i;msg += " Third test " ; msg += moduleState1;
-
-    batVoltage = batDevice.readBatAdcValueExt(10);
-    msg +=" Vol:";msg +=batVoltage ;
-    simpleCli.outputStream->printf(msg.c_str());
-    if(moduleState1 != 0)
-    {
-      setErrorMessageToModbus(true,msg.c_str());
-      setDataToLcd(120,40);//tims and message 모드버스를 이용해서 데이타를 전송한다>
-      delay(3000);
-      i = 1;
-    }
-  }
-
-  setErrorMessageToModbus(false,"");
-  setDataToLcd(120,40);//tims and message
-  digitalWrite(RELAY_FP_IO, P15OUTPUT_MODE);  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
-  delay(20);
-  digitalWrite(RELAY_FN_GND, SENSING_MODE   );
-  delay(100);
-  return true;
-}
 // 인터럽트 서비스 루틴 (ISR)
 // void IRAM_ATTR handleInterrupt() {
 //   // 인터럽트가 발생했을 때 실행될 코드
 //   isAd5940Interrupt = true;
 // }
-bool bootingReasonCheck()
-{
-  esp_reset_reason_t resetReson = esp_reset_reason();
-
-  String strReset[]{
-      // ESP_RST_UNKNOWN:
-      " Reset reason can not be determined",
-      // case ESP_RST_POWERON:
-      " Reset due to power-on event",
-      // case ESP_RST_EXT:
-      " Reset by external pin (not applicable for ESP32)",
-      // case ESP_RST_SW:
-      " Software reset via esp_restart",
-      // case ESP_RST_PANIC:
-      " Software reset due to exception/panic",
-      // case ESP_RST_INT_WDT:
-      " Reset (software or hardware) due to interrupt watchdog",
-      // case ESP_RST_TASK_WDT:
-      " Reset due to task watchdog",
-      // case ESP_RST_WDT:
-      " Reset due to other watchdogs",
-      // case ESP_RST_DEEPSLEEP:
-      " Reset after exiting deep sleep mode",
-      // case ESP_RST_BROWNOUT:
-      " Brownout reset (software or hardware)",
-      // case ESP_RST_SDIO:
-      " Reset over SDIO",
-  };
-
-  FILE *fp;
-  timeval tv;
-  //struct tm *timeinfo;
-
-  //gettimeofday(&tv, NULL);
-  RtcDateTime now = Rtc.GetDateTime();
-  //now = RtcDateTime(tv.tv_sec);
-  //timeinfo = localtime(&tv.tv_sec);
-  char timeString[30];
-  //strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", timeinfo);
-  sprintf(timeString,"%04d-%02d-%02d %0d:%02d:%02d",now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-  String strReason = timeString;
-  strReason += strReset[resetReson];
-  strReason += "\n";
-  Serial.println("\n--------------------------------");
-  Serial.println(strReason.c_str());
-  Serial.println("--------------------------------");
-  fp = fopen("/spiffs/bootLog.txt", "a+");
-  if (fp == NULL)
-  {
-    Serial.printf("\ncellDataLogCreate Error");
-  }
-  else
-  {
-    fwrite(strReason.c_str(), strReason.length(), 1, fp);
-    fclose(fp);
-  }
-  // Serial.printf("\nRead LogFile\n");
-  // lsFile.cat("/spiffs/bootLog.txt");
-  //fp = fopen("/spiffs/bootLog.txt", "a+");
-  //lsFile.rm("bootLog.txt");
-  if( resetReson != 0 ) return true;
-  else return false;
-}
 void AD5940_();
 void setup()
 {
@@ -480,38 +222,12 @@ void setup()
   pinsetup();
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
-  // 외부 485통신에 사용한다.
-  RTUutils::prepareHardwareSerial(Serial1);
-  Serial1.begin(115200, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);
 
   String strResetReason = "System booting reason is  ";
   bool dataReload = false;
-  setRtc();
   Serial.println("Flash Memory Init....Waiting....");
   lsFile.littleFsInitFast(0);
-  //dataReload = bootingReasonCheck();
 
-  // 내부의 LCD와 셀의 온도및 릴레이를 위해 사용한다.
-  RTUutils::prepareHardwareSerial(Serial2);
-  Serial2.begin(115200, SERIAL_8N1, SERIAL_RX2, SERIAL_TX2);
-
-  extendSerial.selectLcd(); // 232통신이다
-                            //  485가 enable가 된다고 해도
-                            //  그쪽으로는 출력이 되지 않으므로 상관이 없다.
-
-  digitalWrite(CELL485_DE, LOW);
-  for (int i = 0; i < 40; i++)
-  {
-    cellvalue[i].voltage = 0;
-    cellvalue[i].impendance = 0;
-    cellvalue[i].temperature = 0;
-    cellvalue[i].voltageCompensation = 0;
-    cellvalue[i].impendanceCompensation = 0;
-  }
-
-  modbusLcdSetup();
-  setupModbusAgentForexternal485();
-  //modbusCellModuleSetup();
   String bleName = "TIMP_";
   String WifiAddress = WiFi.macAddress();
   bleName += WifiAddress;
@@ -521,10 +237,7 @@ void setup()
   Serial.printf("\nBluetooth Name : %s\n",bleName.c_str());
   wifiApmodeConfig();
 
-  // setRtc();
   lsFile.writeLogString(strResetReason);
-  // if (dataReload)
-  //   lsFile.readCellDataLog(1);
 
   SPI.setFrequency(spiClk);
   SPI.begin(SCK, MISO, MOSI, CS_5940);
@@ -566,8 +279,6 @@ void setup()
   }
   esp_log_level_set("*", level);
   for(int i=0;i<40;i++)cellvalue[i].impendance = 0.0;
-  //testSerialCellModule();
-  //testSerialExternal();
 };
 static unsigned long previousSecondmills = 0;
 static int everySecondInterval = 1000;
@@ -604,18 +315,10 @@ void loop(void)
   now = millis(); 
 
   esp_task_wdt_reset();
-  //moubusMouduleProc();
   if ((now - previousSecondmills > everySecondInterval))
   {
-    //if(elaspTime != -1) 
     elaspTime++;
-    digitalWrite(RELAY_FP_IO, SENSING_MODE   );  //이것이 IO0에 연결되어 있으면 서부모듈의 릴레이 2에 해당한다
-    digitalWrite(RELAY_FN_GND, SENSING_MODE  );  
     toggle = toggle == 0 ? 1:0;
-    //printf("\nRelay %s ",digitalRead(P15OUTPUT_MODE)==0?"ON":"OFF");
-
-    //delay(20);
-    //digitalWrite(RELAY_FN_GND, SENSING_MODE   );
     if( elaspTime%10 ==0 )
       simpleCli.outputStream->printf("\nTime elasped : %d",elaspTime);
     previousSecondmills = now;
