@@ -3,6 +3,7 @@
 * C16 0.1uF -> 1uF , Because of USB Programming Timming. 
 * R8을 제거한후 TP2와 TP3를 연결한다. 
   OPAMP와 무관하게 동작시키기 위함이다
+* MCP23S08의 3번 핀을 잘못두었다. GND-> MISO으로 변경한다.
 
 
 ## 시스템설정

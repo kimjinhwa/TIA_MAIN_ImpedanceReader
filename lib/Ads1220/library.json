@@ -1,0 +1,8 @@
+{
+  "name": "Ads1220",
+  "version": "1.0.0",
+  "keywords": "ads1220 adc spi",
+  "description": "TI ADS1220 24-bit ADC SPI (shared bus, AIN0-AVSS)",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

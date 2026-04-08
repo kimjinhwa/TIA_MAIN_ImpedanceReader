@@ -21,6 +21,8 @@
 #include "batDeviceInterface.h"
 #include "modbusCellModule.h"
 #include "modbusLcdModule.h"
+#include <Mcp23s08.h>
+#include <Ads1220.h>
 
 // #include <esp_int_wdt.h>
 // #include <esp_task.h>
@@ -87,12 +89,11 @@ void pinsetup()
     pinMode(A23S08_CS, OUTPUT);
     pinMode(PORT3, OUTPUT); // NOT USE
     pinMode(ADS1220_CS, OUTPUT);
-    pinMode(ADS1220_DR, OUTPUT);
+    pinMode(ADS1220_DR, INPUT_PULLUP); /* DRDY: 변환 준비 시 보통 LOW */
     pinMode(PORT5, OUTPUT);  //NOT USE
     digitalWrite(ADS1220_CS, HIGH);
-    digitalWrite(A23S08_CS, LOW);
+    digitalWrite(A23S08_CS, HIGH);  /* CS active-low: idle = HIGH */
     digitalWrite(ADS1220_CS, HIGH);
-    digitalWrite(ADS1220_DR, LOW);
     digitalWrite(PORT3, HIGH); //NOT USE
     digitalWrite(PORT5, HIGH); //NOT USE
 
@@ -214,6 +215,7 @@ void initCellValue()
 //   isAd5940Interrupt = true;
 // }
 void AD5940_();
+
 void setup()
 {
 
@@ -242,6 +244,31 @@ void setup()
   SPI.setFrequency(spiClk);
   SPI.begin(SCK, MISO, MOSI, CS_5940);
   pinMode(SS, OUTPUT); // VSPI SS -> 아니다..이것은 리셋용이다.
+
+  Mcp23s08_begin(A23S08_CS, CS_5940, ADS1220_CS, (uint32_t)spiClk);
+  ESP_LOGI(TAG, "MCP23S08 GP walk 테스트 (20회, 500ms)");
+  Mcp23s08_testPortWalk(1, 500);
+  Mcp23s08_end(); /* MCP·CS_5940·ADS1220_CS 비선택 */
+  ESP_LOGI(TAG, "MCP23S08 테스트 종료");
+
+  /* ADS1220: AIN0–AVSS, SPI Mode1 (라이브러리). 필요 없으면 이 블록만 제거 */
+  Ads1220_begin(ADS1220_CS, ADS1220_DR, CS_5940, A23S08_CS, (uint32_t)spiClk);
+  Ads1220_reset();
+  Ads1220_applyConfigAin0Avss();
+  for(;;){
+    Ads1220_startSync();
+    if (Ads1220_waitDrdy(500))
+    {
+      const int32_t raw = Ads1220_readRaw();
+      ESP_LOGI(TAG, "ADS1220 AIN0 raw=%ld (~%.4f @2.048V gain1)", (long)raw,
+              (double)Ads1220_rawToVolts(raw, 2.048f, 1)*7.506);
+    }
+    else{
+      ESP_LOGW(TAG, "ADS1220 DRDY timeout");
+    }
+    delay(1000);
+  }
+  Ads1220_end();
 
   simpleCli.outputStream = &Serial;
   vTaskDelay(1000);

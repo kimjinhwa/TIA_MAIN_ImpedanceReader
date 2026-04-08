@@ -1,0 +1,7 @@
+{
+  "name": "Mcp23s08",
+  "version": "1.0.0",
+  "description": "MCP23S08 SPI 8-bit GPIO expander (ESP32 Arduino SPI)",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
