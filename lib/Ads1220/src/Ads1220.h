@@ -37,6 +37,8 @@ bool Ads1220_waitDrdy(uint32_t timeoutMs);
 
 /** RDATA로 24비트 부호 확장 결과 읽기 (변환 준비 후 호출). */
 int32_t Ads1220_readRaw(void);
+int32_t Ads1220_readAveragedRaw(uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
+int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
 
 uint8_t Ads1220_readReg8(uint8_t reg);
 void Ads1220_writeReg8(uint8_t reg, uint8_t val);
@@ -45,4 +47,4 @@ void Ads1220_writeReg8(uint8_t reg, uint8_t val);
  * 내부 기준 2.048V, PGA 게인 gain(1,2,4,…에 맞춰 분모만 반영)일 때 대략 입력 전압(V).
  * 정확한 식은 데이터시트·보정에 따름.
  */
-float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain);
+float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain,float gainRatio );

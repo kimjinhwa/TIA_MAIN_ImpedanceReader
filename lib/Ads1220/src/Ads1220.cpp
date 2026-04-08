@@ -128,24 +128,12 @@ uint8_t Ads1220_readReg8(uint8_t reg)
 
 void Ads1220_applyConfigAin0Avss(void)
 {
-  const uint8_t cfg[4] = {
-      kCfg0_Ain0Avss,
-      kCfg1_Default20SpsGain1,
-      kCfg2_Default,
-      kCfg3_Default,
-  };
-  writeRegsBlock(0, cfg, 4);
+  (void)Ads1220_applyConfigSingleEnded(0);
 }
 
 void Ads1220_applyConfigAin1Avss(void)
 {
-  const uint8_t cfg[4] = {
-      kCfg0_Ain1Avss,
-      kCfg1_Default20SpsGain1,
-      kCfg2_Default,
-      kCfg3_Default,
-  };
-  writeRegsBlock(0, cfg, 4);
+  (void)Ads1220_applyConfigSingleEnded(1);
 }
 
 bool Ads1220_applyConfigSingleEnded(uint8_t ainIndex)
@@ -229,11 +217,54 @@ int32_t Ads1220_readRaw(void)
   return (int32_t)u;
 }
 
-float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain)
+int32_t Ads1220_readAveragedRaw(uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
+{
+  if (!s_ready)
+    return 0;
+  if (samples == 0)
+    samples = 1;
+
+  int64_t sum = 0;
+  uint8_t okCount = 0;
+  for (uint8_t i = 0; i < samples; i++)
+  {
+    if (interSampleDelayUs > 0)
+      delayMicroseconds(interSampleDelayUs);
+    Ads1220_startSync();
+    if (!Ads1220_waitDrdy(timeoutMsPerSample))
+      continue;
+    sum += (int64_t)Ads1220_readRaw();
+    okCount++;
+  }
+
+  if (okCount == 0)
+  {
+    ESP_LOGW(TAG, "readAveragedRaw failed: no valid samples (%u)", (unsigned)samples);
+    return 0;
+  }
+
+  return (int32_t)(sum / (int64_t)okCount);
+}
+
+int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
+{
+  if (!Ads1220_applyConfigSingleEnded(ainIndex))
+    return 0;
+
+  /* 채널 전환 직후 첫 변환값은 버리고 안정화 */
+  Ads1220_startSync();
+  (void)Ads1220_waitDrdy(timeoutMsPerSample);
+  (void)Ads1220_readRaw();
+
+  return Ads1220_readAveragedRaw(samples, timeoutMsPerSample, interSampleDelayUs);
+}
+
+// 전압의 경우 130K:2K 저항을 사용하여 7.506배 증폭을 한다. 
+float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain,float gainRatio )
 {
   if (pgaGain == 0)
     pgaGain = 1;
   /* 단일단·양의 입력 근사: Code는 24비트 2의 보수, 풀스케일은 Vref/gain 근처 */
   const float scale = vrefVolts / (8388608.0f * (float)pgaGain);
-  return (float)raw24 * scale;
+  return (float)raw24 * scale * gainRatio;
 }

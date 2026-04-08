@@ -65,9 +65,8 @@ void Mcp23s08_testPortWalk(unsigned rounds, uint32_t delayMs)
   {
     for (int bit = 0; bit < 8; bit++)
     {
-      const uint8_t onlyThisBitLow = (uint8_t)(~(1u << (unsigned)bit) & 0xFFu);
-      ESP_LOGI(TAG, "GP%d only LOW (OLAT=0x%02X)", bit, onlyThisBitLow);
-      Mcp23s08_setOutput(onlyThisBitLow);
+      ESP_LOGI(TAG, "GP%d only LOW ", bit);
+      Mcp23s08_setOutput(1 << bit);
       delay(delayMs);
       ESP_LOGI(TAG, "all HIGH");
       Mcp23s08_setOutput(0x00u);

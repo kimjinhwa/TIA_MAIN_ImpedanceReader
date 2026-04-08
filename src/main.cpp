@@ -129,7 +129,7 @@ void readnWriteEEProm()
     systemDefaultValue.installed_cells= 20;
     strncpy(systemDefaultValue.userid,"admin",10);
     strncpy(systemDefaultValue.userpassword,"admin",10);
-    for(int i=0;i<40;i++){
+    for(int i=0;i<20;i++){
       systemDefaultValue.voltageCompensation[i]=0;
       systemDefaultValue.impendanceCompensation[i]=0;
     }
@@ -247,26 +247,20 @@ void setup()
 
   Mcp23s08_begin(A23S08_CS, CS_5940, ADS1220_CS, (uint32_t)spiClk);
   ESP_LOGI(TAG, "MCP23S08 GP walk 테스트 (20회, 500ms)");
-  Mcp23s08_testPortWalk(1, 500);
+  Mcp23s08_testPortWalk(1, 100);
   Mcp23s08_end(); /* MCP·CS_5940·ADS1220_CS 비선택 */
   ESP_LOGI(TAG, "MCP23S08 테스트 종료");
 
   /* ADS1220: AIN0–AVSS, SPI Mode1 (라이브러리). 필요 없으면 이 블록만 제거 */
   Ads1220_begin(ADS1220_CS, ADS1220_DR, CS_5940, A23S08_CS, (uint32_t)spiClk);
   Ads1220_reset();
-  Ads1220_applyConfigAin0Avss();
   for(;;){
-    Ads1220_startSync();
-    if (Ads1220_waitDrdy(500))
-    {
-      const int32_t raw = Ads1220_readRaw();
-      ESP_LOGI(TAG, "ADS1220 AIN0 raw=%ld (~%.4f @2.048V gain1)", (long)raw,
-              (double)Ads1220_rawToVolts(raw, 2.048f, 1)*7.506);
-    }
-    else{
-      ESP_LOGW(TAG, "ADS1220 DRDY timeout");
-    }
-    delay(1000);
+    long startTime = millis();
+    const int32_t raw = Ads1220_readAveragedRawOnChannel(0, 16, 500, 100);
+
+    ESP_LOGI(TAG, "ADS1220 AIN0 avgRaw=%ld (~%.4fV ) %ldms", (long)raw,
+            (double)Ads1220_rawToVolts(raw, 2.048f, 1,7.506), millis() - startTime);
+    delay(100);
   }
   Ads1220_end();
 
