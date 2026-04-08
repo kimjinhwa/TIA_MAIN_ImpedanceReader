@@ -77,13 +77,12 @@ void pinsetup()
 
     pinMode(EXT_485EN_1, OUTPUT);
     digitalWrite(EXT_485EN_1, LOW);
+
     pinMode(RST_5940, OUTPUT);
     digitalWrite(RST_5940, HIGH);
 
-    pinMode(RS_485ADD1, OUTPUT);
-    digitalWrite(RST_5940, HIGH);
-    pinMode(RS_485ADD2, OUTPUT);
-    digitalWrite(RST_5940, HIGH);
+    pinMode(RS_485ADD1, INPUT_PULLUP);
+    pinMode(RS_485ADD2, INPUT_PULLUP);
 
     pinMode(ADS1220_CS, OUTPUT);
     pinMode(A23S08_CS, OUTPUT);
@@ -216,6 +215,13 @@ void initCellValue()
 // }
 void AD5940_();
 
+uint8_t get485Address()
+{
+  int address1 = digitalRead(RS_485ADD1);
+  int address2 = digitalRead(RS_485ADD2);
+  uint8_t address = address1 << 1 | address2;
+  return address;
+}
 void setup()
 {
 
@@ -261,6 +267,8 @@ void setup()
     ESP_LOGI(TAG, "ADS1220 AIN0 avgRaw=%ld (~%.4fV ) %ldms", (long)raw,
             (double)Ads1220_rawToVolts(raw, 2.048f, 1,7.506), millis() - startTime);
     delay(100);
+    uint8_t address = get485Address();
+    ESP_LOGI(TAG, "485 Address = %d", address);
   }
   Ads1220_end();
 

@@ -13,8 +13,8 @@
 
 #define EXT_485EN_1         GPIO_NUM_4  
 // 5.0보드에서 추가한다.
-#define RS_485ADD1          GPIO_NUM_32  
-#define RS_485ADD2          GPIO_NUM_33  
+#define RS_485ADD1          GPIO_NUM_33  
+#define RS_485ADD2          GPIO_NUM_25  
 
 #define RST_5940            GPIO_NUM_5  // 4951칩을 리셋하기 위함. 
 #define RESET_5940          RST_5940            // 4951칩을 리셋하기 위함. 
