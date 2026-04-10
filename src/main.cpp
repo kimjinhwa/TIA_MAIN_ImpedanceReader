@@ -5,6 +5,7 @@
 #include <driver/adc.h>
 #include "filesystem.h"
 #include "mainGrobal.h"
+#include "eepromNvs.hpp"
 #include "SimpleCLI.h"
 
 
@@ -19,8 +20,6 @@
 #include "ModbusClientRTU.h"
 #include "modbusRtu.h"
 #include "batDeviceInterface.h"
-#include "modbusCellModule.h"
-#include "modbusLcdModule.h"
 #include <Mcp23s08.h>
 #include <Ads1220.h>
 
@@ -53,7 +52,6 @@ ModbusServerRTU external485(2000,EXT_485EN_1);
 uint32_t request_time;
 uint16_t values[2];
 uint16_t cellModbusIdReceived;
-ExtendSerial extendSerial;
 
 uint8_t selecectedCellNumber =0;
 volatile bool isAd5940Interrupt = false;
@@ -109,7 +107,7 @@ void wifiApmodeConfig()
 void readnWriteEEProm()
 {
   uint8_t ipaddr1;
-  if (EEPROM.read(0) != 0x55)
+  if (!eepromNvsBlockLooksValid())
   {
     systemDefaultValue.runMode = 0;  // 0: manual 0x01 : onlyVoltate Audo, 0x03 : Voltage & Impedance 
     systemDefaultValue.AlarmAmpere = 2000;  // 200A
@@ -125,7 +123,7 @@ void readnWriteEEProm()
     strncpy(systemDefaultValue.ssid ,"iptime_mbhong",20);
     strncpy(systemDefaultValue.ssid_password,"",10);
     systemDefaultValue.SUBNETMASK =(uint32_t)IPAddress(255, 255, 255, 0); 
-    systemDefaultValue.installed_cells= 20;
+    systemDefaultValue.installed_cells= 15;
     strncpy(systemDefaultValue.userid,"admin",10);
     strncpy(systemDefaultValue.userpassword,"admin",10);
     for(int i=0;i<20;i++){
@@ -136,8 +134,7 @@ void readnWriteEEProm()
     systemDefaultValue.image_Cal = 35511.0f;
     systemDefaultValue.logLevel = ESP_LOG_INFO;
     systemDefaultValue.startBatnumber = 1;
-    EEPROM.writeByte(0, 0x55);
-    EEPROM.writeBytes(1, (const byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
   }
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
@@ -208,6 +205,79 @@ void initCellValue()
     }
   }
 }
+
+/**
+ * 셀당 ADS1220 평균 샘플 수. 20 SPS·DRDY 대기 시 대략 (샘플 수)×50ms/셀 근처 → 전체 스캔 시간에 직결.
+ * 16 + 순환필터는 노이즈 억제가 겹침; 빠른 스캔이면 샘플 수를 줄이고 스캔 간 순환필터로 보완하는 편이 낫다.
+ */
+#define ADS1220_SAMPLES_PER_CELL 4
+#define ADS1220_DR_TIMEOUT_MS 500
+#define ADS1220_INTER_SAMPLE_US 50
+
+/** 스캔 사이클 간 이동 평균 깊이(셀당). ADC 내부 평균과 역할이 다름 — 시간축 스무딩. */
+#define CELL_MEAS_FILTER_DEPTH 4
+
+static float s_cellVoltRing[MAX_INSTALLED_CELLS][CELL_MEAS_FILTER_DEPTH];
+static uint8_t s_cellVoltRingIdx[MAX_INSTALLED_CELLS];
+static uint8_t s_cellVoltRingCount[MAX_INSTALLED_CELLS];
+static float s_cellVoltRingSum[MAX_INSTALLED_CELLS];
+
+static float s_cellImpRing[MAX_INSTALLED_CELLS][CELL_MEAS_FILTER_DEPTH];
+static uint8_t s_cellImpRingIdx[MAX_INSTALLED_CELLS];
+static uint8_t s_cellImpRingCount[MAX_INSTALLED_CELLS];
+static float s_cellImpRingSum[MAX_INSTALLED_CELLS];
+
+static float cellRingPush(float *ring, uint8_t *pIdx, uint8_t *pCount, float *pSum, float x)
+{
+  const uint8_t cap = (uint8_t)CELL_MEAS_FILTER_DEPTH;
+  uint8_t i = *pIdx;
+  if (*pCount < cap)
+  {
+    ring[i] = x;
+    *pSum += x;
+    (*pCount)++;
+    *pIdx = (uint8_t)((i + 1u) % cap);
+    return *pSum / (float)(*pCount);
+  }
+  *pSum -= ring[i];
+  ring[i] = x;
+  *pSum += x;
+  *pIdx = (uint8_t)((i + 1u) % cap);
+  return *pSum / (float)cap;
+}
+
+/** 외부 MUX 회로용 OLAT 값: 셀 0→0x01 … 셀 19→0x14(20). */
+static uint8_t mcpBatteryMuxPattern(unsigned cellIndex)
+{
+  return (uint8_t)(cellIndex + 1u);
+}
+
+/**
+ * installed_cells만큼 순차 스캔해 cellvalue[]에 필터된 전압·임피던스 반영.
+ * AD5940과 SPI 버스를 공유하므로 동시 접근 시 충돌 가능 — 필요하면 뮤텍스·순서 조정.
+ */
+void scanBatteriesAds1220(void)
+{
+  const unsigned n = (unsigned)systemDefaultValue.installed_cells;
+  const unsigned nCells = (n == 0u || n > MAX_INSTALLED_CELLS) ? MAX_INSTALLED_CELLS : n;
+  const uint32_t t0 = millis();
+
+  for (unsigned i = 0; i < nCells; i++)
+  {
+    Mcp23s08_setOutput(mcpBatteryMuxPattern(i));
+    delay(5); /* 멀티플렉서·아날로그 안정화 */
+
+    const float vSample = Ads1220_readAveragedVoltageOnChannel(
+        0, ADS1220_SAMPLES_PER_CELL, ADS1220_DR_TIMEOUT_MS, ADS1220_INTER_SAMPLE_US);
+    cellvalue[i].voltage = cellRingPush(
+        s_cellVoltRing[i], &s_cellVoltRingIdx[i], &s_cellVoltRingCount[i], &s_cellVoltRingSum[i], vSample);
+
+    const float zSample = cellvalue[i].impendance;
+    cellvalue[i].impendance = cellRingPush(
+        s_cellImpRing[i], &s_cellImpRingIdx[i], &s_cellImpRingCount[i], &s_cellImpRingSum[i], zSample);
+  }
+  ESP_LOGI(TAG, "ADS1220 cell scan: %u cells, %lums", (unsigned)nCells, (unsigned long)(millis() - t0));
+}
 // 인터럽트 서비스 루틴 (ISR)
 // void IRAM_ATTR handleInterrupt() {
 //   // 인터럽트가 발생했을 때 실행될 코드
@@ -225,7 +295,7 @@ uint8_t get485Address()
 void setup()
 {
 
-  EEPROM.begin(sizeof(nvsSystemSet) + 1);
+  EEPROM.begin((unsigned)EEPROM_NV_RESERVED_BYTES);
   readnWriteEEProm();
   pinsetup();
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
@@ -260,17 +330,14 @@ void setup()
   /* ADS1220: AIN0–AVSS, SPI Mode1 (라이브러리). 필요 없으면 이 블록만 제거 */
   Ads1220_begin(ADS1220_CS, ADS1220_DR, CS_5940, A23S08_CS, (uint32_t)spiClk);
   Ads1220_reset();
+  Mcp23s08_initOutputsAll();
+  initCellValue();
   for(;;){
-    long startTime = millis();
-    const int32_t raw = Ads1220_readAveragedRawOnChannel(0, 16, 500, 100);
-
-    ESP_LOGI(TAG, "ADS1220 AIN0 avgRaw=%ld (~%.4fV ) %ldms", (long)raw,
-            (double)Ads1220_rawToVolts(raw, 2.048f, 1,7.506), millis() - startTime);
-    delay(100);
-    uint8_t address = get485Address();
-    ESP_LOGI(TAG, "485 Address = %d", address);
+    ESP_LOGI(TAG, "scanBatteriesAds1220");
+    scanBatteriesAds1220();
+    ESP_LOGI(TAG, "cellvalue[0].voltage: %.4f", cellvalue[0].voltage);
+    delay(1000);
   }
-  Ads1220_end();
 
   simpleCli.outputStream = &Serial;
   vTaskDelay(1000);
@@ -307,7 +374,6 @@ void setup()
     break;
   }
   esp_log_level_set("*", level);
-  for(int i=0;i<40;i++)cellvalue[i].impendance = 0.0;
 };
 static unsigned long previousSecondmills = 0;
 static int everySecondInterval = 1000;
@@ -360,9 +426,9 @@ void loop(void)
   {
         esp_task_wdt_reset();
         time_t startRead = millis();
-        time_t endTime ;
+        scanBatteriesAds1220();
+        time_t endTime = millis();
         parameters = simpleCli.outputStream;
-        endTime = millis();             // take 300ms
         simpleCli.outputStream->printf("\ntime:%ld  (%ldmili)\n",loopCount, endTime - startRead);
         vTaskDelay(10);
         //AD5940_Main(parameters); 

@@ -1,4 +1,9 @@
 {
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.errorSquiggles": "enabled",
+    "editor.hover.enabled": true,
+    "editor.parameterHints.enabled": true,
     "files.associations": {
         "ad5940.h": "c",
         "batimpedance.h": "c",
@@ -57,6 +62,7 @@
         "stdexcept": "cpp",
         "thread": "cpp",
         "typeinfo": "cpp",
-        "bitset": "cpp"
+        "bitset": "cpp",
+        "queue": "cpp"
     }
 }

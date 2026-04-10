@@ -2,8 +2,8 @@
 #include <EEPROM.h>
 #include "modbusRtu.h"
 #include "mainGrobal.h"
+#include "eepromNvs.hpp"
 #include <RtcDS1302.h>
-#include "modbusCellModule.h"
 #include <ModbusClientRTU.h>
 
 ModbusMessage  syncRequestCellModule(uint32_t token,uint8_t modbusId, uint8_t fCode,uint16_t startAddress, uint16_t len);
@@ -32,15 +32,15 @@ void setSendbuffer(uint8_t fCode,uint16_t *sendValue){
   RtcDateTime now;
   now = RtcDateTime(tmv.tv_sec);
   if(fCode== 4){
-    for(int i=0;i<40;i++){
+    for(int i=0;i<20;i++){
       sendValue[i] = (uint16_t)(cellvalue[i].voltage *100);
     }
     int16_t temperature; 
-    for(int i=40;i<80;i++){
+    for(int i=40;i<60;i++){
       sendValue[i] = cellvalue[i-40].temperature ;
       //*(sendValue+i) = (uint16_t)();
     }
-    for(int i=80;i<120;i++){
+    for(int i=80;i<100;i++){
       sendValue[i] = (uint16_t)(cellvalue[i-80].impendance*100);
     }
     //에러가 있다면 여기에 값을 적어 넣는다. 최대 30글자이다.
@@ -48,17 +48,6 @@ void setSendbuffer(uint8_t fCode,uint16_t *sendValue){
   if(fCode== 3)
   {
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-    for(int i=0;i<40;i++){
-      sendValue[i] = (uint16_t)(systemDefaultValue.voltageCompensation[i]);
-    }
-    int16_t temperature; 
-    for(int i=40;i<80;i++){
-      sendValue[i] = 0;
-      //*(sendValue+i) = (uint16_t)();
-    }
-    for(int i=80;i<120;i++){
-      sendValue[i] = (uint16_t)(systemDefaultValue.impendanceCompensation[i-80]);
-    }
   }
   sendValue[120]=now.Year();
   sendValue[121]=now.Month();
@@ -122,26 +111,6 @@ ModbusMessage FC03(ModbusMessage request)
     }
   }
   
-  if(address >= 0x1101 && address <= 0x2501  ){  // Cell제어 
-    uint8_t moduleAddress = address >> 8;
-    moduleAddress  -= 16;
-    uint16_t *pValues;
-    pValues= (uint16_t *)&modbusCellData;
-    words = words > 16 ? 16 :words;
-    uint32_t token=millis();
-    uint32_t restoken=millis();
-    ModbusMessage rc =  syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), 0,  3);
-    ESP_LOGI("REQ","server id (%d) func %d ",request.getServerID(),request.getFunctionCode());
-    ESP_LOGI("REQ","server id (%d) func %d error %d",rc.getServerID(),rc.getFunctionCode(),rc.getError());
-
-    for (int i = 0; i < words; i++)
-    {
-      response.add(pValues[i]);
-    }
-  }
-  else if(address >= 0x50010  ){  //  5941제어이다.
-  }
-
   return response;
 };
 ModbusMessage FC04(ModbusMessage request) {
@@ -215,31 +184,6 @@ ModbusMessage FC04(ModbusMessage request) {
       value = _modBusID;
       response.add(value);
     }
-  }
-  else if(address >= 0x1101 && address <= 0x2501  ){  // Cell제어 
-      // response.add(modbusCellData.temperature);
-      // response.add(modbusCellData.modbusid);
-      // response.add(modbusCellData.baudrate);
-    uint8_t moduleAddress = address >> 8;//-30000;
-    moduleAddress  -= 16;
-    //moduleAddress = (int16_t)(moduleAddress / 3) +1;
-    uint16_t *pValues;
-    pValues= (uint16_t *)&modbusCellData;
-    words = words > 16 ? 16 :words;
-    uint32_t token=millis();
-    uint32_t restoken=millis();
-    //TODO: 
-    ModbusMessage rc =  syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), 0,  3);
-    //   1, request.getFunctionCode(), 0,  3);
-    ESP_LOGI("REQ","server id (%d) func %d ",request.getServerID(),request.getFunctionCode());
-    ESP_LOGI("REQ","server id (%d) func %d error %d",rc.getServerID(),rc.getFunctionCode(),rc.getError());
-
-    for (i = 0; i < words; i++)
-    {
-      response.add(pValues[i]);
-    }
-  }
-  else if(address >= 0x50010  ){  //  5941제어이다.
   }
   return response;
 };
@@ -342,17 +286,17 @@ ModbusMessage FC06(ModbusMessage request)
   if (writeAddress < 40)  // voltage compensation
   {
     systemDefaultValue.voltageCompensation[writeAddress] = value;
-    EEPROM.writeBytes(1, (const byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   }
-  if (writeAddress >= 40 && writeAddress < 80) // temperature
+  if (writeAddress >= 40 && writeAddress < 60) // temperature
   {
   }
-  if (writeAddress >= 80 && writeAddress < 120)  //impedance compensation
+  if (writeAddress >= 80 && writeAddress < 100)  //impedance compensation
   {
     systemDefaultValue.impendanceCompensation[writeAddress - 80] = value;
-    EEPROM.writeBytes(1, (const byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   }
@@ -410,7 +354,7 @@ ModbusMessage FC06(ModbusMessage request)
       break;
     };
     ESP_LOGI("MODUBS", "Write EEPROM");
-    EEPROM.writeBytes(1, (const byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   }

@@ -2,12 +2,38 @@
 #include <SPI.h>
 #include <esp_log.h>
 
+#define VOLTAGE_OFFSET 0.356
+#define AMPERAGE_OFFSET 0.000
+#define VOLTAGE_GAIN_RATIO 7.506
+#define AMPERAGE_GAIN_RATIO 2.000
 static const char *TAG = "Ads1220";
 
 /* ADS1220 SPI commands (TI SBAS501) */
 static constexpr uint8_t kCmdReset = 0x06u;
 static constexpr uint8_t kCmdStartSync = 0x08u;
 static constexpr uint8_t kCmdRdata = 0x10u;
+
+float Ads1220VolateCompensation(float voltage)
+{
+  if(voltage < 1.3)
+    return -0.0431f;
+  else if(voltage < 4.0)
+    return -0.0431f + (voltage - 1.3) * (0.0431-0.0584) / (4.0-1.3);
+  else if(voltage < 6.0)
+    return -0.0478f + (voltage - 4.0) * (0.0478-0.0431) / (6.0-4.0);
+  else if(voltage < 8.0)
+    return -0.0500f + (voltage - 6.0) * (0.0500-0.0478) / (8.0-6.0);
+  else if(voltage < 10.0)
+    return -0.0600f + (voltage - 8.0) * (0.0730-0.0700) / (10.0-8.0);
+  else if(voltage < 12.0)
+    return -0.0610f + (voltage - 10.0) * (0.0620-0.0500) / (12.0-10.0);
+  else if(voltage < 14.0)
+    return -0.0610f + (voltage - 12.0) * (0.0610-0.0620) / (14.0-12.0);
+  else if(voltage < 16.0)
+    return -0.0610f + (voltage - 14.0) * (0.0610-0.0610) / (16.0-14.0);
+  else
+    return -0.0610f + (voltage - 16.0) * (0.0610-0.0610) / (18.0-16.0);
+}
 
 static inline uint8_t cmdRreg(uint8_t reg, uint8_t numBytes)
 {
@@ -245,7 +271,15 @@ int32_t Ads1220_readAveragedRaw(uint8_t samples, uint32_t timeoutMsPerSample, ui
 
   return (int32_t)(sum / (int64_t)okCount);
 }
-
+/* 채널 전환 직후 첫 변환값은 버리고 안정화 
+   Voltage : channel 0
+   Amperage : channel 2
+   channel 1,3 : Reserved
+   parameter : ainIndex(0:Voltage, 2:Amperage)
+   samples : 변환 횟수
+   timeoutMsPerSample : 각 변환의 타임아웃(ms)
+   interSampleDelayUs : 각 변환 사이의 딜레이(us)
+*/
 int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
 {
   if (!Ads1220_applyConfigSingleEnded(ainIndex))
@@ -255,16 +289,35 @@ int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint
   Ads1220_startSync();
   (void)Ads1220_waitDrdy(timeoutMsPerSample);
   (void)Ads1220_readRaw();
+  int32_t result = Ads1220_readAveragedRaw(samples, timeoutMsPerSample, interSampleDelayUs);
+  Ads1220_end();
+  return result;
+}
 
-  return Ads1220_readAveragedRaw(samples, timeoutMsPerSample, interSampleDelayUs);
+float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
+{
+  const int32_t raw = Ads1220_readAveragedRawOnChannel(ainIndex, samples, timeoutMsPerSample, interSampleDelayUs);
+  const float voltage = Ads1220_rawToVoltsWithOffset(raw, 1, VOLTAGE_GAIN_RATIO);
+  const float compensation = Ads1220VolateCompensation(voltage);
+  return voltage + compensation;
 }
 
 // 전압의 경우 130K:2K 저항을 사용하여 7.506배 증폭을 한다. 
+
 float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain,float gainRatio )
 {
   if (pgaGain == 0)
     pgaGain = 1;
   /* 단일단·양의 입력 근사: Code는 24비트 2의 보수, 풀스케일은 Vref/gain 근처 */
   const float scale = vrefVolts / (8388608.0f * (float)pgaGain);
-  return (float)raw24 * scale * gainRatio;
+  return (float)raw24 * scale * gainRatio ;
+}
+float Ads1220_rawToVoltsWithOffset(int32_t raw24, uint8_t pgaGain, float gainRatio)
+{
+  const float vrefVolts = 2.048f; /* ADS1220 내부 기준, 항상 동일 */
+  if (pgaGain == 0)
+    pgaGain = 1;
+  /* 단일단·양의 입력 근사: Code는 24비트 2의 보수, 풀스케일은 Vref/gain 근처 */
+  const float scale = vrefVolts / (8388608.0f * (float)pgaGain);
+  return (float)raw24 * scale * gainRatio + VOLTAGE_OFFSET;
 }

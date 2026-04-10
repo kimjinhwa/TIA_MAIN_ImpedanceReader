@@ -40,6 +40,9 @@ int32_t Ads1220_readRaw(void);
 int32_t Ads1220_readAveragedRaw(uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
 int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
 
+/** 평균 샘플 후 전압(V)까지 한 번에. PGA 1, 보드 분압·오프셋은 라이브러리 상수 사용. */
+float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
+
 uint8_t Ads1220_readReg8(uint8_t reg);
 void Ads1220_writeReg8(uint8_t reg, uint8_t val);
 
@@ -48,3 +51,5 @@ void Ads1220_writeReg8(uint8_t reg, uint8_t val);
  * 정확한 식은 데이터시트·보정에 따름.
  */
 float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain,float gainRatio );
+/** 내부 기준 2.048V 고정, PGA·gainRatio만 반영 후 VOLTAGE_OFFSET 적용. */
+float Ads1220_rawToVoltsWithOffset(int32_t raw24, uint8_t pgaGain, float gainRatio);

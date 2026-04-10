@@ -92,6 +92,16 @@ typedef struct
 } nvsSystemSet;
 extern nvsSystemSet systemDefaultValue;
 
+/**
+ * EEPROM 레이아웃: [0]=HEAD, [1 .. sizeof(nvsSystemSet)]=nvsSystemSet, [tail]=TAIL.
+ * 구조체 크기가 바뀌면 tail 위치가 달라져 tail 검사 실패 → 기본값 재기록 권장.
+ * EEPROM 읽기/쓰기 API는 C++ 전용 eepromNvs.hpp 를 포함할 것(mainGrobal.h는 .c에서도 쓰임).
+ */
+#define EEPROM_NV_MAGIC_HEAD 0x55u
+#define EEPROM_NV_MAGIC_TAIL 0xAAu
+#define EEPROM_NV_TAIL_BYTE_OFFSET (1u + sizeof(nvsSystemSet))
+#define EEPROM_NV_RESERVED_BYTES   (2u + sizeof(nvsSystemSet))
+
 typedef struct {
   time_t readTime; // 4byte
   float voltage;// 4byte
