@@ -1,7 +1,9 @@
 # TIA Resistance Measurement System.
 ## Board 4.0 Debugging
 * C16 0.1uF -> 1uF , Because of USB Programming Timming. 
-* R8을 제거한후 TP2와 TP3를 연결한다. 
+* R8을 제거한후 TP2와 TP3를 연결한다.-> 여기에 10K저항을 하나 넣자. 
+  이렇게 되면 OPAMP와 무관하게 피드백이 들어가게 된다. 
+  결과는 아주 좋다.
   OPAMP와 무관하게 동작시키기 위함이다
 * MCP23S08의 3번 핀을 잘못두었다. GND-> MISO으로 변경한다.
 * zener => 15V -> 18로 바꾸자.

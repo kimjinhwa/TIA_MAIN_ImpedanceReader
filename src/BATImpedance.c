@@ -168,13 +168,22 @@ AD5940Err AppBATCtrl(int32_t BatCtrl, void *pPara)
 		AD5940_WriteReg(REG_AFE_SYNCEXTDEVICE, 0x4); // GPIO2
     PreCharge(PRECHARGE_RCAL);
     PreCharge(PRECHARGE_AMP);
-    AD5940_FIFOCtrlS(FIFOSRC_DFT, bFALSE);
-		AD5940_FIFOThrshSet(2);
+    AD5940_FIFOCtrlS(FIFOSRC_DFT, bFALSE); //FIFO 소스/동작을 잠깐 끄고(리셋·재설정 전 단계) 깨끗한 상태에서 다시 켜기 위한 패턴의 첫 줄입니다.
+		AD5940_FIFOThrshSet(2);  //FIFO에 쌓이는 샘플 수 임계값을 2로 설정합니다. DFT 결과가 실수부+허수부처럼 2워드 단위로 올라오는 경우가 많아, “2개만 쌓여도” 인터럽트/폴링 조건이 맞게 잡히도록 하는 전형적인 값입니다. 
 
     AD5940_FIFOCtrlS(FIFOSRC_DFT, bTRUE); //enable FIFO
+                                          //DFT 엔진 출력을 FIFO로 보내는 것을 다시 켭니다. 이후 RCAL 측정에서 DFT 결과를 FIFO에서 읽게 됩니다.
 		AD5940_AFECtrlS(AFECTRL_HPREFPWR|AFECTRL_INAMPPWR|AFECTRL_EXTBUFPWR|\
                 AFECTRL_WG|AFECTRL_DACREFPWR|AFECTRL_HSDACPWR|\
                 AFECTRL_SINC2NOTCH, bTRUE);
+                // HPREFPWR 고전력 기준(밴드갭 등)
+                // INAMPPWR 내부 전압 기준(1V1, 1V8 등)
+                // EXTBUFPWR 외부 버퍼 기준(외부 버퍼 등)
+                // WG 발진기 기준(발진기 등)
+                // DACREFPWR DAC 기준(DAC 등)
+                // HSDACPWR HS 디지털 앰프 기준(HS 디지털 앰프 등)
+                // SINC2NOTCH SINC2 노치 필터 기준(SINC2 노치 필터 등)
+                // 모든 블록을 활성화합니다. 이들은 하이브리드 모드 중에 자동으로 끄기 때문에, 하이브리드 모드에서 절전 상태로 들어가기 전에 미리 활성화해두어야 합니다.
 		AD5940_Delay10us(10000); // 100000us 100ms
 		AppBATMeasureRCAL();
     break;

@@ -249,22 +249,20 @@ static float cellRingPush(float *ring, uint8_t *pIdx, uint8_t *pCount, float *pS
 /** 외부 MUX 회로용 OLAT 값: 셀 0→0x01 … 셀 19→0x14(20). */
 static uint8_t mcpBatteryMuxPattern(unsigned cellIndex)
 {
-  return (uint8_t)(cellIndex + 1u);
+  return (uint8_t)(cellIndex );
 }
 
 /**
  * installed_cells만큼 순차 스캔해 cellvalue[]에 필터된 전압·임피던스 반영.
  * AD5940과 SPI 버스를 공유하므로 동시 접근 시 충돌 가능 — 필요하면 뮤텍스·순서 조정.
  */
-void scanBatteriesAds1220(void)
+void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
 {
-  const unsigned n = (unsigned)systemDefaultValue.installed_cells;
-  const unsigned nCells = (n == 0u || n > MAX_INSTALLED_CELLS) ? MAX_INSTALLED_CELLS : n;
   const uint32_t t0 = millis();
 
   for (unsigned i = 0; i < nCells; i++)
   {
-    Mcp23s08_setOutput(mcpBatteryMuxPattern(i));
+    Mcp23s08_setOutput(mcpBatteryMuxPattern(i+1));
     delay(5); /* 멀티플렉서·아날로그 안정화 */
 
     const float vSample = Ads1220_readAveragedVoltageOnChannel(
@@ -332,11 +330,37 @@ void setup()
   Ads1220_reset();
   Mcp23s08_initOutputsAll();
   initCellValue();
+  Mcp23s08_setOutput(mcpBatteryMuxPattern(0));
+  //for(int i=0;i<1;i){
+  scanBatteriesAds1220(1);
+
+  void AD5940_init();
+  void AD5940_ShutDown();
+  // void AD5940_DriveCE0Low_NoLoopback();
+  // void AD5940_DriveCE0Low_WithLoopback();
+  // void AD5940_OutputSineOnCE0(float freqHz, float offsetMv, float amplitudeMvpp, bool withLoopback);
+  AD5940_init();
+  // AD5940_DriveCE0Low_NoLoopback();   // Test 1: CE0 low drive, AIN1 loopback off
+  // AD5940_DriveCE0Low_WithLoopback(); // Test 2: CE0 low drive, AIN1 loopback on
+  // AD5940_OutputSineOnCE0(1000.0f, 200.0f, 100.0f, false); // Test 3: CE0 sine, 0.6V offset, no loopback
+  
+  float AD5940_calibration(float *real , float *image);
+
+  float real , image;
+  float ImpMagnitude = AD5940_calibration(&real,&image);
+  //AD5940_ShutDown();
+
+  void changeAD5940ToMeasurement(bool bChange);
   for(;;){
+    changeAD5940ToMeasurement(true);
     ESP_LOGI(TAG, "scanBatteriesAds1220");
-    scanBatteriesAds1220();
-    ESP_LOGI(TAG, "cellvalue[0].voltage: %.4f", cellvalue[0].voltage);
-    delay(1000);
+    Ads1220_startSync();
+    (void)Ads1220_waitDrdy(ADS1220_DR_TIMEOUT_MS);
+    const int32_t vSample = Ads1220_readRaw();
+    float fVoltage1 = Ads1220_rawToVolts(vSample, 2.048, 1, 1.0); 
+    float fVoltage2 = Ads1220_rawToVoltsWithOffset(vSample, 1, 7.506);
+    ESP_LOGI(TAG, "fVoltage: %d, %.4f, %.4f", vSample, fVoltage1, fVoltage2);
+    delay(2000);
   }
 
   simpleCli.outputStream = &Serial;

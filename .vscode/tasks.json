@@ -1,0 +1,46 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "pio: SerialProg (build only)",
+      "type": "shell",
+      "command": "pio run -e SerialProg",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": false
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "pio: SerialProg → upload → monitor",
+      "type": "shell",
+      "command": "pio run -e SerialProg && pio run -e SerialProg -t upload && pio device monitor",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

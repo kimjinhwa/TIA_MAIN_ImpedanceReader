@@ -197,6 +197,11 @@ static int32_t AD5940PlatformCfg(void)
 }
 
 extern AppBATCfg_Type AppBATCfg ; 
+#define ACVOLTPP_DEFAULT 300.0f
+#define DCVOLT_DEFAULT 600.0f
+#define ACVOLTPP_MEASURE 1.0f
+#define DCVOLT_MEASURE 200.0f
+
 void AD5940BATStructInit(void)
 {
   AppBATCfg_Type *pBATCfg;
@@ -204,8 +209,8 @@ void AD5940BATStructInit(void)
   pBATCfg->SeqStartAddr = 0;
   pBATCfg->MaxSeqLen = 512;
   pBATCfg->RcalVal = 56.0;  							/* Value of RCAL on EVAL-AD5941BATZ board is 50mOhm */
-  pBATCfg->ACVoltPP = 100.0f;							/* Pk-pk amplitude is 300mV */
-  pBATCfg->DCVolt = 100.0f;							/* DC bias 1100mV */
+  pBATCfg->ACVoltPP = ACVOLTPP_DEFAULT;							/* Pk-pk amplitude is 300mV */
+  pBATCfg->DCVolt = DCVOLT_DEFAULT;							/* DC bias 1100mV */
   pBATCfg->DftNum = DFTNUM_8192;
   
   pBATCfg->FifoThresh = 2;      					/* 2 results in FIFO, real and imaginary part. */
@@ -224,6 +229,257 @@ void AD5940BATStructInit(void)
 void AD5940_ShutDown(){
   AppBATCtrl(BATCTRL_SHUTDOWN,0);
 }
+
+// void AD5940_SetWGOutput(bool on)
+// {
+//   if (AD5940_WakeUp(10) > 10)
+//   {
+//     ESP_LOGW(TAG, "AD5940_SetWGOutput: wakeup failed");
+//     return;
+//   }
+//   /* Prevent generated BAT sequence from immediately overwriting runtime WG/LPDAC settings. */
+//   AppBATCtrl(BATCTRL_STOPNOW, 0);
+
+//   if (!on)
+//   {
+//     LPLoopCfg_Type lp_loop;
+//     WGCfg_Type wg_cfg;
+//     SWMatrixCfg_Type sw_cfg;
+//     uint32_t smallAmpWord;
+//     memset(&lp_loop, 0, sizeof(lp_loop));
+//     memset(&wg_cfg, 0, sizeof(wg_cfg));
+//     memset(&sw_cfg, 0, sizeof(sw_cfg));
+
+//     /* "OFF" test profile: DC offset code -> 0 and very small sine amplitude. */
+//     smallAmpWord = (uint32_t)(10.0f / 800.0f * 2047.0f + 0.5f); /* ~10mVpp */
+//     lp_loop.LpDacCfg.LpdacSel = LPDAC0;
+//     lp_loop.LpDacCfg.LpDacSrc = LPDACSRC_MMR;
+//     lp_loop.LpDacCfg.LpDacSW = LPDACSW_VZERO2LPTIA | LPDACSW_VZERO2PIN;
+//     lp_loop.LpDacCfg.LpDacVzeroMux = LPDACVZERO_12BIT;
+//     lp_loop.LpDacCfg.LpDacVbiasMux = LPDACVBIAS_6BIT;
+//     lp_loop.LpDacCfg.LpDacRef = LPDACREF_2P5;
+//     lp_loop.LpDacCfg.DataRst = bFALSE;
+//     lp_loop.LpDacCfg.PowerEn = bTRUE;
+//     lp_loop.LpDacCfg.DacData12Bit = 0;
+//     lp_loop.LpDacCfg.DacData6Bit = 31;
+//     AD5940_LPLoopCfgS(&lp_loop);
+//     sw_cfg.Dswitch = SWD_OPEN;
+//     sw_cfg.Pswitch = SWP_OPEN;
+//     sw_cfg.Nswitch = SWN_OPEN;
+//     sw_cfg.Tswitch = SWT_OPEN;
+//     AD5940_SWMatrixCfgS(&sw_cfg);
+//     sw_cfg.Dswitch = SWD_CE0;
+//     sw_cfg.Pswitch = SWP_AIN1;
+//     sw_cfg.Nswitch = SWN_AIN0;
+//     sw_cfg.Tswitch = SWT_OPEN;
+//     AD5940_SWMatrixCfgS(&sw_cfg);
+//     wg_cfg.WgType = WGTYPE_SIN;
+//     wg_cfg.GainCalEn = bFALSE;
+//     wg_cfg.OffsetCalEn = bFALSE;
+//     wg_cfg.SinCfg.SinFreqWord = AD5940_WGFreqWordCal(AppBATCfg.SinFreq, AppBATCfg.SysClkFreq);
+//     wg_cfg.SinCfg.SinAmplitudeWord = smallAmpWord;
+//     wg_cfg.SinCfg.SinOffsetWord = 0;
+//     wg_cfg.SinCfg.SinPhaseWord = 0;
+//     AD5940_WGCfgS(&wg_cfg);
+//     AD5940_AFECtrlS(AFECTRL_DACREFPWR | AFECTRL_HSDACPWR | AFECTRL_WG, bTRUE);
+//     ESP_LOGI(TAG, "WG OFF-profile: bias code=0, small sine ~10mVpp");
+//     return;
+//   }
+
+//   {
+//     LPLoopCfg_Type lp_loop;
+//     SWMatrixCfg_Type sw_cfg;
+//     float dcVoltMv;
+//     uint32_t lpdacCode;
+//     memset(&lp_loop, 0, sizeof(lp_loop));
+//     memset(&sw_cfg, 0, sizeof(sw_cfg));
+
+//     dcVoltMv = AppBATCfg.DCVolt;
+//     if (dcVoltMv < 200.0f)
+//       dcVoltMv = 200.0f;
+//     if (dcVoltMv > 2400.0f)
+//       dcVoltMv = 2400.0f;
+//     lpdacCode = (uint32_t)((dcVoltMv - 200.0f) / 2200.0f * 4095.0f + 0.5f);
+
+//     /* Restore LPDAC bias path and original DC bias before enabling waveform. */
+//     lp_loop.LpDacCfg.LpdacSel = LPDAC0;
+//     lp_loop.LpDacCfg.LpDacSrc = LPDACSRC_MMR;
+//     lp_loop.LpDacCfg.LpDacSW = LPDACSW_VZERO2LPTIA | LPDACSW_VZERO2PIN;
+//     lp_loop.LpDacCfg.LpDacVzeroMux = LPDACVZERO_12BIT;
+//     lp_loop.LpDacCfg.LpDacVbiasMux = LPDACVBIAS_6BIT;
+//     lp_loop.LpDacCfg.LpDacRef = LPDACREF_2P5;
+//     lp_loop.LpDacCfg.DataRst = bFALSE;
+//     lp_loop.LpDacCfg.PowerEn = bTRUE;
+//     lp_loop.LpDacCfg.DacData12Bit = lpdacCode;
+//     lp_loop.LpDacCfg.DacData6Bit = 31;
+//     AD5940_LPLoopCfgS(&lp_loop);
+//     sw_cfg.Dswitch = SWD_CE0;
+//     sw_cfg.Pswitch = SWP_AIN1;
+//     sw_cfg.Nswitch = SWN_AIN0;
+//     sw_cfg.Tswitch = SWT_OPEN;
+//     AD5940_SWMatrixCfgS(&sw_cfg);
+//     AD5940_AFECtrlS(AFECTRL_DACREFPWR | AFECTRL_HSDACPWR, bTRUE);
+//     AD5940_AFECtrlS(AFECTRL_WG, bTRUE);
+//     ESP_LOGI(TAG, "WG output ON, bias restored %.1fmV(code=%lu), switch matrix restored", (double)dcVoltMv, (unsigned long)lpdacCode);
+//   }
+// }
+
+// static void AD5940_DriveCE0LowCommon(bool withLoopback)
+// {
+//   /* Keep AFE awake and drive CE0 with the minimum HSDAC code instead of Hi-Z shutdown. */
+//   if (AD5940_WakeUp(10) > 10)
+//   {
+//     ESP_LOGW(TAG, "AD5940_DriveCE0Low: wakeup failed");
+//     return;
+//   }
+
+//   AppBATCtrl(BATCTRL_STOPNOW, 0);
+//   AD5940_WriteReg(REG_AFE_SWMUX, 1 << 0); /* Select battery path (same as BATCTRL_START). */
+
+//   HSLoopCfg_Type hs_loop;
+//   memset(&hs_loop, 0, sizeof(hs_loop));
+//   hs_loop.HsDacCfg.ExcitBufGain = EXCITBUFGAIN_2;
+//   hs_loop.HsDacCfg.HsDacGain = HSDACGAIN_1;
+//   hs_loop.HsDacCfg.HsDacUpdateRate = 0x1B;
+
+//   hs_loop.HsTiaCfg.DiodeClose = bFALSE;
+//   hs_loop.HsTiaCfg.HstiaBias = HSTIABIAS_1P1;
+//   hs_loop.HsTiaCfg.HstiaCtia = 31;
+//   hs_loop.HsTiaCfg.HstiaDeRload = HSTIADERLOAD_OPEN;
+//   hs_loop.HsTiaCfg.HstiaDeRtia = HSTIADERTIA_OPEN;
+//   hs_loop.HsTiaCfg.HstiaRtiaSel = HSTIARTIA_10K;
+
+//   hs_loop.SWMatCfg.Dswitch = SWD_CE0;
+//   hs_loop.SWMatCfg.Pswitch = withLoopback ? SWP_AIN1 : SWP_OPEN;
+//   hs_loop.SWMatCfg.Nswitch = SWN_AIN0;
+//   hs_loop.SWMatCfg.Tswitch = SWT_OPEN;
+
+//   hs_loop.WgCfg.WgType = WGTYPE_MMR;
+//   hs_loop.WgCfg.WgCode = 0x000; /* Minimum DAC code => CE0 low-level drive target. */
+//   AD5940_HSLoopCfgS(&hs_loop);
+
+//   AD5940_AFECtrlS(AFECTRL_HPREFPWR | AFECTRL_INAMPPWR | AFECTRL_EXTBUFPWR |
+//                       AFECTRL_WG | AFECTRL_DACREFPWR | AFECTRL_HSDACPWR,
+//                   bTRUE);
+//   AD5940_WGDACCodeS(0x000);
+// }
+// void AD5940_DriveCE0Low_WithLoopback()
+// {
+//   AD5940_DriveCE0LowCommon(true);
+// }
+
+// void AD5940_DriveCE0Low_NoLoopback()
+// {
+//   AD5940_DriveCE0LowCommon(false);
+// }
+
+// void AD5940_ForceCE0ToZero()
+// {
+//   /* Backward-compatible alias */
+//   AD5940_DriveCE0Low_WithLoopback();
+// }
+
+// void AD5940_OutputSineOnCE0(float freqHz, float offsetMv, float amplitudeMvpp, bool withLoopback)
+// {
+//   if (AD5940_WakeUp(10) > 10)
+//   {
+//     ESP_LOGW(TAG, "AD5940_OutputSineOnCE0: wakeup failed");
+//     return;
+//   }
+
+//   AppBATCtrl(BATCTRL_STOPNOW, 0);
+//   AD5940_WriteReg(REG_AFE_SWMUX, 1 << 0); /* Battery path */
+
+//   /* Keep same scaling as BATImpedance sequence:
+//      ACVoltPP(mVpp) -> WG amplitude word (0..2047 for 0..800mVpp). */
+//   float ampMvpp = amplitudeMvpp;
+//   if (ampMvpp < 0.0f)
+//     ampMvpp = 0.0f;
+//   if (ampMvpp > 800.0f)
+//     ampMvpp = 800.0f;
+//   const uint32_t ampWord = (uint32_t)(ampMvpp / 800.0f * 2047.0f + 0.5f);
+
+//   /* Keep same DC bias mapping as BATImpedance:
+//      DCVolt(mV) -> LPDAC 12-bit code with range 200mV..2400mV. */
+//   float offMv = offsetMv;
+//   if (offMv < 200.0f)
+//     offMv = 200.0f;
+//   if (offMv > 2400.0f)
+//     offMv = 2400.0f;
+//   const uint32_t lpdacCode = (uint32_t)((offMv - 200.0f) / 2200.0f * 4095.0f + 0.5f);
+
+//   AFERefCfg_Type aferef_cfg;
+//   memset(&aferef_cfg, 0, sizeof(aferef_cfg));
+//   aferef_cfg.HpBandgapEn = bTRUE;
+//   aferef_cfg.Hp1V1BuffEn = bTRUE;
+//   aferef_cfg.Hp1V8BuffEn = bTRUE;
+//   aferef_cfg.Disc1V1Cap = bFALSE;
+//   aferef_cfg.Disc1V8Cap = bFALSE;
+//   aferef_cfg.Hp1V8ThemBuff = bFALSE;
+//   aferef_cfg.Hp1V8Ilimit = bFALSE;
+//   aferef_cfg.Lp1V1BuffEn = bFALSE;
+//   aferef_cfg.Lp1V8BuffEn = bFALSE;
+//   aferef_cfg.LpBandgapEn = bTRUE;
+//   aferef_cfg.LpRefBufEn = bTRUE;
+//   aferef_cfg.LpRefBoostEn = bFALSE;
+//   AD5940_REFCfgS(&aferef_cfg);
+
+//   HSLoopCfg_Type hs_loop;
+//   memset(&hs_loop, 0, sizeof(hs_loop));
+//   hs_loop.HsDacCfg.ExcitBufGain = EXCITBUFGAIN_2;
+//   hs_loop.HsDacCfg.HsDacGain = HSDACGAIN_1;
+//   hs_loop.HsDacCfg.HsDacUpdateRate = 0x1B;
+
+//   hs_loop.HsTiaCfg.DiodeClose = bFALSE;
+//   hs_loop.HsTiaCfg.HstiaBias = HSTIABIAS_1P1;
+//   hs_loop.HsTiaCfg.HstiaCtia = 31;
+//   hs_loop.HsTiaCfg.HstiaDeRload = HSTIADERLOAD_OPEN;
+//   hs_loop.HsTiaCfg.HstiaDeRtia = HSTIADERTIA_OPEN;
+//   hs_loop.HsTiaCfg.HstiaRtiaSel = HSTIARTIA_10K;
+
+//   hs_loop.SWMatCfg.Dswitch = SWD_CE0;
+//   hs_loop.SWMatCfg.Pswitch = withLoopback ? SWP_AIN1 : SWP_OPEN;
+//   hs_loop.SWMatCfg.Nswitch = SWN_AIN0;
+//   hs_loop.SWMatCfg.Tswitch = SWT_OPEN;
+
+//   hs_loop.WgCfg.WgType = WGTYPE_SIN;
+//   hs_loop.WgCfg.GainCalEn = bFALSE;
+//   hs_loop.WgCfg.OffsetCalEn = bFALSE;
+//   hs_loop.WgCfg.SinCfg.SinFreqWord = AD5940_WGFreqWordCal(freqHz, 16000000.0f);
+//   hs_loop.WgCfg.SinCfg.SinAmplitudeWord = ampWord;
+//   hs_loop.WgCfg.SinCfg.SinOffsetWord = 0; /* Match BATImpedance path: DC bias is from LPDAC, not WGOFFSET. */
+//   hs_loop.WgCfg.SinCfg.SinPhaseWord = 0;
+//   AD5940_HSLoopCfgS(&hs_loop);
+
+//   LPLoopCfg_Type lp_loop;
+//   memset(&lp_loop, 0, sizeof(lp_loop));
+//   lp_loop.LpDacCfg.LpdacSel = LPDAC0;
+//   lp_loop.LpDacCfg.LpDacSrc = LPDACSRC_MMR;
+//   lp_loop.LpDacCfg.LpDacSW = LPDACSW_VZERO2LPTIA | LPDACSW_VZERO2PIN;
+//   lp_loop.LpDacCfg.LpDacVzeroMux = LPDACVZERO_12BIT;
+//   lp_loop.LpDacCfg.LpDacVbiasMux = LPDACVBIAS_6BIT;
+//   lp_loop.LpDacCfg.LpDacRef = LPDACREF_2P5;
+//   lp_loop.LpDacCfg.DataRst = bFALSE;
+//   lp_loop.LpDacCfg.PowerEn = bTRUE;
+//   lp_loop.LpDacCfg.DacData12Bit = lpdacCode;
+//   lp_loop.LpDacCfg.DacData6Bit = 31;
+//   lp_loop.LpAmpCfg.LpAmpSel = LPAMP0;
+//   lp_loop.LpAmpCfg.LpAmpPwrMod = LPAMPPWR_NORM;
+//   lp_loop.LpAmpCfg.LpPaPwrEn = bFALSE;
+//   lp_loop.LpAmpCfg.LpTiaPwrEn = bTRUE;
+//   lp_loop.LpAmpCfg.LpTiaRf = LPTIARF_20K;
+//   lp_loop.LpAmpCfg.LpTiaRload = LPTIARLOAD_SHORT;
+//   lp_loop.LpAmpCfg.LpTiaRtia = LPTIARTIA_OPEN;
+//   lp_loop.LpAmpCfg.LpTiaSW = LPTIASW(7) | LPTIASW(5) | LPTIASW(9);
+//   AD5940_LPLoopCfgS(&lp_loop);
+
+//   AD5940_AFECtrlS(AFECTRL_HPREFPWR | AFECTRL_INAMPPWR | AFECTRL_EXTBUFPWR |
+//                       AFECTRL_WG | AFECTRL_DACREFPWR | AFECTRL_HSDACPWR,
+//                   bTRUE);
+//   ESP_LOGI(TAG, "CE0 sine start(BAT-like): f=%.2fHz, offset=%.1fmV(LPDAC=%lu), amp=%.1fmVpp(word=%lu), loopback=%s",
+//            freqHz, (double)offMv, (unsigned long)lpdacCode, (double)ampMvpp, (unsigned long)ampWord,
+//            withLoopback ? "on" : "off");
+// }
 void AD5940_Main_init()
 {
   uint16_t temp;
@@ -247,6 +503,28 @@ void AD5940_Main_init()
 /* Return RcalVolt magnitude 
 * 
 */
+void changeAD5940ToMeasurement(bool bChange)
+{
+  if(bChange)
+  {
+  AppBATCfg.SinFreq = 190000.0f;
+  AppBATCfg.ACVoltPP = ACVOLTPP_MEASURE;
+  AppBATCfg.DCVolt = DCVOLT_MEASURE;							/* DC 최소전압*/ 
+  AppBATCfg.bParaChanged = bTRUE;
+    if (AD5940ERR_OK != AppBATInit(AppBuff, APPBUFF_SIZE))
+    {
+        ESP_LOGW(TAG, "Wakeup Error..retry...");
+    }
+  }
+  else
+  {
+    AppBATCfg.SinFreq = 10000.0f;
+    AppBATCfg.ACVoltPP = ACVOLTPP_DEFAULT;
+    AppBATCfg.DCVolt = DCVOLT_DEFAULT;							/* DC 최소전압*/ 
+    AppBATCfg.bParaChanged = bTRUE;
+    AppBATCtrl(BATCTRL_STOPNOW, 0);
+  }
+}
 float AD5940_calibration(float *real , float *image)
 {
   uint16_t loopCount = 10;
@@ -261,6 +539,7 @@ float AD5940_calibration(float *real , float *image)
     //simpleCli.outputStream->
     //simpleCli.outputStream->printf("Now on calibration(%d)...", loopCount);
     time_t startTime = millis();
+    //changeAD5940ToMeasurement(true);
     if (AD5940ERR_WAKEUP == AppBATCtrl(BATCTRL_MRCAL, 0))
     {
       simpleCli.outputStream->printf("\nWakeup Error..retry...");
@@ -281,10 +560,24 @@ float AD5940_calibration(float *real , float *image)
       *real += AppBATCfg.RcalVolt.Real;
       *image += AppBATCfg.RcalVolt.Image;
     }
+
+    // AD5940_RstClr();
+    // delay(2000);
+    // AD5940_RstSet();
+    // delay(2000);
+    //AD5940_SetWGOutput(false);
+    // AppBATCtrl(BATCTRL_SHUTDOWN, 0);
+    // delay(2000);
+    // AD5940_DriveCE0LowCommon(true);
+    //ESP_LOGI(TAG, "AD5940_SHUTDOWN");
+    // //AD5940_SetWGOutput(true);
+    // delay(2000);
+    // AD5940_DriveCE0LowCommon(false);
+    // ESP_LOGI(TAG, "WG Output ON");
   };
   *real /= 10.0f;
   *image /= 10.0f;
-  AD5940_ShutDown();
+  //AD5940_ShutDown();
   return AD5940_ComplexMag(&AppBATCfg.RcalVolt);
 }
 void AD5940_Main(void *parameters);
