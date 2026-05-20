@@ -1,8 +1,15 @@
 # Check if tag option is provided
 $createTag = $false
+$gitpush = $false
 if ($args -contains "-t") {
     $createTag = $true
 }
+if ($args -contains "-u") {
+    $gitpush = $true
+}
+
+$currentBranch = git rev-parse --abbrev-ref HEAD 
+echo "Current Bransh : $currentBranch "
 
 $content = Get-Content .\Version.h  -Encoding utf8 -TotalCount 1
 if ($content -match '#define VERSION "(.*?)".*\/\/(.*)')
@@ -16,13 +23,15 @@ if ($content -match '#define VERSION "(.*?)".*\/\/(.*)')
     # Always commit and push
     git add -A
     git commit -am $comment
-    #git push origin main3
+
+    if ($gitpush) {
+        git push origin $currentBranch 
+    }
 
     # Create tag only if -t option is provided
     if ($createTag) {
         Write-Host "Creating tag: $version"
         git tag -a $version -m $comment
-        #git push origin $version
     } else {
         Write-Host "Tag creation skipped. Use -t option to create a tag."
     }
