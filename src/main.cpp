@@ -290,6 +290,9 @@ uint8_t get485Address()
   uint8_t address = address1 << 1 | address2;
   return address;
 }
+
+float AD5940_calibration(float *real , float *image);
+float AD5940_readImpMagnitude();
 void setup()
 {
 
@@ -344,15 +347,22 @@ void setup()
   // AD5940_DriveCE0Low_WithLoopback(); // Test 2: CE0 low drive, AIN1 loopback on
   // AD5940_OutputSineOnCE0(1000.0f, 200.0f, 100.0f, false); // Test 3: CE0 sine, 0.6V offset, no loopback
   
-  float AD5940_calibration(float *real , float *image);
 
   float real , image;
   float ImpMagnitude = AD5940_calibration(&real,&image);
+
   //AD5940_ShutDown();
 
   void changeAD5940ToMeasurement(bool bChange);
-  for(;;){
+  Mcp23s08_setOutput(mcpBatteryMuxPattern(1));
+  for(int batNo=1;batNo<3;batNo++){
     changeAD5940ToMeasurement(true);
+    Mcp23s08_setOutput(mcpBatteryMuxPattern(batNo));
+    //delay(700);   //14.5965. 14.581  //
+    //delay(800); //14.6068 14.580  //
+    //delay(900); //14.6152 14.589  //
+    delay(1000); //14.6152 14.589  //
+
     ESP_LOGI(TAG, "scanBatteriesAds1220");
     Ads1220_startSync();
     (void)Ads1220_waitDrdy(ADS1220_DR_TIMEOUT_MS);
@@ -360,6 +370,13 @@ void setup()
     float fVoltage1 = Ads1220_rawToVolts(vSample, 2.048, 1, 1.0); 
     float fVoltage2 = Ads1220_rawToVoltsWithOffset(vSample, 1, 7.506);
     ESP_LOGI(TAG, "fVoltage: %d, %.4f, %.4f", vSample, fVoltage1, fVoltage2);
+
+    /*For Test*/
+    changeAD5940ToMeasurement(false);
+    //AD5940_calibration(&real,&image);
+    float ImpMagnitude = AD5940_readImpMagnitude();
+    
+    if(batNo==2) batNo =0;
     delay(2000);
   }
 

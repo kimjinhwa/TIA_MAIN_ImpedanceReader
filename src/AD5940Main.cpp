@@ -28,6 +28,8 @@ Analog Devices Software License Agreement.
 
 #define MAX_LOOP_COUNT 100
 #define APPBUFF_SIZE 512
+#define CAL_TOTAL_SAMPLES 10
+#define CAL_SKIP_SAMPLES 5 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
 
 static Print *outputStream;
 uint32_t AppBuff[APPBUFF_SIZE];
@@ -222,9 +224,10 @@ void AD5940BATStructInit(void)
 	pBATCfg->SweepCfg.SweepStop = 0.0f;	/* Finish sweep at 1000Hz */
 	pBATCfg->SweepCfg.SweepPoints = 20;			/* 100 frequencies in the sweep */
 	pBATCfg->SweepCfg.SweepLog = bTRUE;			/* Set to bTRUE to use LOG scale. Set bFALSE to use linear scale */
-	ESP_LOGI(TAG,"pBATCfg->SinFreq %f",pBATCfg->SinFreq );
-	ESP_LOGI(TAG,"pBATCfg->ACVoltPP %f",pBATCfg->ACVoltPP);
-	ESP_LOGI(TAG,"pBATCfg->DCVolt  %f",pBATCfg->DCVolt  );
+  pBATCfg->bParaChanged = bTRUE;  /* AppBATInit()이 시퀀서(SinFreq/WG)를 SRAM에 다시 쓰도록 */
+	ESP_LOGD(TAG,"pBATCfg->SinFreq %f",pBATCfg->SinFreq );
+	ESP_LOGD(TAG,"pBATCfg->ACVoltPP %f",pBATCfg->ACVoltPP);
+	ESP_LOGD(TAG,"pBATCfg->DCVolt  %f",pBATCfg->DCVolt  );
 }
 void AD5940_ShutDown(){
   AppBATCtrl(BATCTRL_SHUTDOWN,0);
@@ -518,16 +521,24 @@ void changeAD5940ToMeasurement(bool bChange)
   }
   else
   {
-    AppBATCfg.SinFreq = 10000.0f;
-    AppBATCfg.ACVoltPP = ACVOLTPP_DEFAULT;
-    AppBATCfg.DCVolt = DCVOLT_DEFAULT;							/* DC 최소전압*/ 
-    AppBATCfg.bParaChanged = bTRUE;
     AppBATCtrl(BATCTRL_STOPNOW, 0);
+    AD5940BATStructInit(); /* SinFreq=1kHz, AC/DC 기본값 + bParaChanged */
+    AD5940Err err = AppBATInit(AppBuff, APPBUFF_SIZE);
+    ESP_LOGD(TAG, "measurement OFF: SinFreq=%.1f AppBATInit=%d",
+             AppBATCfg.SinFreq, (int)err);
+    if (err != AD5940ERR_OK)
+    {
+      ESP_LOGW(TAG, "measurement OFF: AppBATInit failed, WG may stay at 190kHz");
+    }
   }
 }
 float AD5940_calibration(float *real , float *image)
 {
-  uint16_t loopCount = 10;
+  const uint16_t samplesUsed = CAL_TOTAL_SAMPLES - CAL_SKIP_SAMPLES;
+  uint16_t loopCount = CAL_TOTAL_SAMPLES;
+  uint16_t sampleIndex = 0;
+  uint16_t averagedCount = 0;
+
   AD5940PlatformCfg();
   AD5940BATStructInit();             /* Configure your parameters in this function */
   AppBATInit(AppBuff, APPBUFF_SIZE); /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
@@ -536,48 +547,42 @@ float AD5940_calibration(float *real , float *image)
   simpleCli.outputStream->printf("Now on calibration(...");
   while (loopCount--)
   {
-    //simpleCli.outputStream->
-    //simpleCli.outputStream->printf("Now on calibration(%d)...", loopCount);
     time_t startTime = millis();
-    //changeAD5940ToMeasurement(true);
     if (AD5940ERR_WAKEUP == AppBATCtrl(BATCTRL_MRCAL, 0))
     {
       simpleCli.outputStream->printf("\nWakeup Error..retry...");
     }; /* Measur RCAL each point in sweep */
     time_t endTime = millis();
-    // ESP_LOGI("IMP", "RcalVolt Real Image IMP:%f\t %f\t %f (%dmills)",
-    //          AppBATCfg.RcalVolt.Real,
-    //          AppBATCfg.RcalVolt.Image,
-    //          AD5940_ComplexMag(&AppBATCfg.RcalVolt),endTime-startTime);
-    simpleCli.outputStream->printf("\r\n%d: R I Mag:%6.2f\t %6.2f\t %6.2f (%dmills)",
-                           loopCount,
+    const bool useSample = (sampleIndex >= CAL_SKIP_SAMPLES);
+    simpleCli.outputStream->printf("\r\n%u%s: R I Mag:%6.2f\t %6.2f\t %6.2f (%dms)",
+                           sampleIndex,
+                           useSample ? "*" : " ",
                            AppBATCfg.RcalVolt.Real,
                            AppBATCfg.RcalVolt.Image,
-                           AD5940_ComplexMag(&AppBATCfg.RcalVolt), endTime - startTime);
-    delay(100);
-    if (loopCount < 10)
+                           AD5940_ComplexMag(&AppBATCfg.RcalVolt), (int)(endTime - startTime));
+    if (useSample)
     {
       *real += AppBATCfg.RcalVolt.Real;
       *image += AppBATCfg.RcalVolt.Image;
+      averagedCount++;
     }
+    sampleIndex++;
+    delay(100);
+  }
 
-    // AD5940_RstClr();
-    // delay(2000);
-    // AD5940_RstSet();
-    // delay(2000);
-    //AD5940_SetWGOutput(false);
-    // AppBATCtrl(BATCTRL_SHUTDOWN, 0);
-    // delay(2000);
-    // AD5940_DriveCE0LowCommon(true);
-    //ESP_LOGI(TAG, "AD5940_SHUTDOWN");
-    // //AD5940_SetWGOutput(true);
-    // delay(2000);
-    // AD5940_DriveCE0LowCommon(false);
-    // ESP_LOGI(TAG, "WG Output ON");
-  };
-  *real /= 10.0f;
-  *image /= 10.0f;
-  //AD5940_ShutDown();
+  if (averagedCount == 0)
+  {
+    ESP_LOGW(TAG, "calibration: no samples averaged");
+    return 0.0f;
+  }
+
+  *real /= (float)averagedCount;
+  *image /= (float)averagedCount;
+  AppBATCfg.RcalVolt.Real = *real;
+  AppBATCfg.RcalVolt.Image = *image;
+  ESP_LOGI(TAG, "calibration avg(%u/%u): R=%.3f I=%.3f Mag=%.3f mOhm",
+           averagedCount, CAL_TOTAL_SAMPLES, *real, *image,
+           AD5940_ComplexMag(&AppBATCfg.RcalVolt));
   return AD5940_ComplexMag(&AppBATCfg.RcalVolt);
 }
 void AD5940_Main(void *parameters);
@@ -588,6 +593,47 @@ void AD5940_init(){
   //AD5940_ShutDown();
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
 }
+float AD5940_readImpMagnitude()
+{
+
+  AppBATInit(AppBuff, APPBUFF_SIZE); /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
+
+  time_t startTime = millis();
+  if (AD5940ERR_WAKEUP == AppBATCtrl(BATCTRL_START, 0))
+  {
+    ESP_LOGW(TAG, "readImp: BATCTRL_START wakeup failed");
+    return 0.0f;
+  }
+
+  while (AD5940_INTCTestFlag(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH) == bFALSE)
+  {
+    delay(10);
+    if (millis() - startTime > 8000)
+    {
+      ESP_LOGW(TAG, "readImp: timeout %dms", (int)(millis() - startTime));
+      AppBATCtrl(BATCTRL_STOPNOW, 0);
+      return 0.0f;
+    }
+  }
+
+  ESP_LOGD(TAG, "readImp: FIFO ready (%dms)", (int)(millis() - startTime));
+  AD5940_INTCClrFlag(AFEINTSRC_ALLINT);
+  AD5940_ClrMCUIntFlag();
+  uint32_t temp = APPBUFF_SIZE;
+  AD5940_INTCCfg(AFEINTC_0, AFEINTSRC_DATAFIFOTHRESH, bTRUE);
+  AppBATISR(AppBuff, &temp);
+
+  if (temp == 0)
+  {
+    ESP_LOGW(TAG, "readImp: AppBATISR returned no battery data");
+    return 0.0f;
+  }
+
+  BATShowResult(AppBuff, temp);
+  fImpCar_Type *pImp = (fImpCar_Type *)AppBuff;
+  return AD5940_ComplexMag(&pImp[0]);
+}
+
 void AD5940_Main(void *parameters)
 {
   AD5940_init();

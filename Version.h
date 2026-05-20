@@ -1,4 +1,6 @@
-#define VERSION "1.0.3" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// pBATCfg->bParaChanged = bTRUE; 
+//efine VERSION "1.0.3" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
 //#define VERSION "1.0.3" // EEPROM 레이아웃 변경 
 //#define VERSION "1.0.3" // 전압 튜닝을 완료함. 
 //16개의 샘플을 읽을때 약 860ms이 걸린다. 32개의 샘플을 읽을때 약 1669ms이 걸린다. 
