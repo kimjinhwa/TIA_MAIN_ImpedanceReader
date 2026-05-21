@@ -402,11 +402,14 @@ void moduleid_configCallback(cmd *cmdPtr)
 
 }
 void temperature_configCallback(cmd *cmdPtr){
-  uint16_t  batTemperature;
   Command cmd(cmdPtr);
   Argument arg = cmd.getArgument(0);
   String argVal = arg.getValue();
-  simpleCli.outputStream->printf("\r\n%s",argVal.c_str());
+  ntcTemperatureUpdate();
+  simpleCli.outputStream->printf("\r\nNTC IN_TH1: %.1f C  IN_TH2: %.1f C",
+      ntcTemperatureGetCx10(0) / 10.0f, ntcTemperatureGetCx10(1) / 10.0f);
+  if (argVal.length() > 0)
+    simpleCli.outputStream->printf("  (%s)", argVal.c_str());
 }
 void impedance_configCallback(cmd *cmdPtr){
   AD5940_Main(simpleCli.outputStream);

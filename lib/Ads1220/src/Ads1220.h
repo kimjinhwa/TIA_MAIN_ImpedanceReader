@@ -43,6 +43,38 @@ int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint
 /** 평균 샘플 후 전압(V)까지 한 번에. PGA 1, 보드 분압·오프셋은 라이브러리 상수 사용. */
 float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
 
+#define ADS1220_AIN_VOLTAGE 0u
+#define ADS1220_AIN_CURRENT 2u
+/** CT 정격 전류(A), 0A 중심·한쪽 만뿌 전압 스팬(V) — ctCurrentInit/setCtScale */
+#define ADS1220_CT_RATED_AMPS_DEFAULT 200.0f
+#define ADS1220_CT_CENTER_VOLTS_DEFAULT 2.0f
+/** center에서 0V(방전) 또는 4V(충전)까지 거리 — CT ±4V→±2V 분압 시 2.0V */
+#define ADS1220_CT_VOLTS_SPAN_DEFAULT 2.0f
+
+/**
+ * CT AIN2: 2V=0A, 0~2V 방전(-), 2~4V 충전(+).
+ * I(A) = (V_ain2 - centerVolts) * (ctRatedAmps / voltsSpan) * gain
+ */
+typedef struct
+{
+  float ctRatedAmps;
+  float centerVolts;
+  float voltsSpan;
+  float gain;
+} Ads1220CtScale;
+
+void Ads1220_setCtScale(const Ads1220CtScale *scale);
+void Ads1220_getCtScale(Ads1220CtScale *scaleOut);
+
+/** AIN2 raw → 핀 전압(V), AMPERAGE_GAIN_RATIO만 적용(오프셋은 전류식에서 centerVolts로 제거) */
+float Ads1220_rawToVoltsAmperage(int32_t raw24, float pgaGain);
+
+/** V_ain2 → 전류(A). centerVolts(2V)=0A, ±voltsSpan에서 ±ctRatedAmps. */
+float Ads1220_voltsToAmperes(float voltsAin2, const Ads1220CtScale *scale);
+
+/** AIN2 평균 샘플 후 전류(A). MUX 불필요(전류 전용 입력). */
+float Ads1220_readAveragedCurrentAmps(uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
+
 uint8_t Ads1220_readReg8(uint8_t reg);
 void Ads1220_writeReg8(uint8_t reg, uint8_t val);
 

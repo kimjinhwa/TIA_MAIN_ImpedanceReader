@@ -3,10 +3,21 @@
 #include <esp_log.h>
 
 #define VOLTAGE_OFFSET 0.356
-#define AMPERAGE_OFFSET 0.000
-#define VOLTAGE_GAIN_RATIO 7.506
-#define AMPERAGE_GAIN_RATIO 2.000
+#define AMPERAGE_OFFSET 0.000f
+#define VOLTAGE_GAIN_RATIO 7.506f
+/** AIN2 핀 전압 = ADC 환산값 (멀티미터와 동일, ×2 하지 않음) */
+#define AMPERAGE_GAIN_RATIO 2.0f
+#define ADS1220_VREF_V 2.048f
+/** CT 정격(기본 200A)일 때 AIN2 전압(V) — 테스터·부하로 ctCurrentInit/setCtScale 보정 */
+#define ADS1220_CT_RATED_AMPS_DEFAULT 200.0f
 static const char *TAG = "Ads1220";
+
+static Ads1220CtScale s_ctScale = {
+    ADS1220_CT_RATED_AMPS_DEFAULT,
+    ADS1220_CT_CENTER_VOLTS_DEFAULT,
+    ADS1220_CT_VOLTS_SPAN_DEFAULT,
+    1.0f,
+};
 
 /* ADS1220 SPI commands (TI SBAS501) */
 static constexpr uint8_t kCmdReset = 0x06u;
@@ -302,7 +313,52 @@ float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, ui
   return voltage + compensation;
 }
 
-// 전압의 경우 130K:2K 저항을 사용하여 7.506배 증폭을 한다. 
+void Ads1220_setCtScale(const Ads1220CtScale *scale)
+{
+  if (scale == nullptr)
+    return;
+  s_ctScale = *scale;
+  if (s_ctScale.ctRatedAmps <= 0.0f)
+    s_ctScale.ctRatedAmps = ADS1220_CT_RATED_AMPS_DEFAULT;
+  if (s_ctScale.centerVolts <= 0.01f)
+    s_ctScale.centerVolts = ADS1220_CT_CENTER_VOLTS_DEFAULT;
+  if (s_ctScale.voltsSpan <= 0.01f)
+    s_ctScale.voltsSpan = ADS1220_CT_VOLTS_SPAN_DEFAULT;
+  if (s_ctScale.gain <= 0.0f)
+    s_ctScale.gain = 1.0f;
+}
+
+void Ads1220_getCtScale(Ads1220CtScale *scaleOut)
+{
+  if (scaleOut != nullptr)
+    *scaleOut = s_ctScale;
+}
+
+float Ads1220_rawToVoltsAmperage(int32_t raw24, float pgaGain)
+{
+  if (pgaGain == 0)
+    pgaGain = 1;
+  const float scale = ADS1220_VREF_V / (8388608.0f * (float)pgaGain);
+  return (float)raw24 * scale * AMPERAGE_GAIN_RATIO;
+}
+
+float Ads1220_voltsToAmperes(float voltsAin2, const Ads1220CtScale *scale)
+{
+  const Ads1220CtScale *sc = (scale != nullptr) ? scale : &s_ctScale;
+  if (sc->voltsSpan <= 0.01f || sc->ctRatedAmps <= 0.0f)
+    return 0.0f;
+  return (voltsAin2 - sc->centerVolts) * (sc->ctRatedAmps / sc->voltsSpan) * sc->gain;
+}
+
+float Ads1220_readAveragedCurrentAmps(uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
+{
+  const int32_t raw = Ads1220_readAveragedRawOnChannel(
+      ADS1220_AIN_CURRENT, samples, timeoutMsPerSample, interSampleDelayUs);
+  const float v = Ads1220_rawToVoltsAmperage(raw, 1.0);
+  return Ads1220_voltsToAmperes(v, &s_ctScale);
+}
+
+// 전압: 130K:2K 분압 → 7.506배. 전류: AIN2 2V=0A, (V-2)*ctRated/2.
 
 float Ads1220_rawToVolts(int32_t raw24, float vrefVolts, uint8_t pgaGain,float gainRatio )
 {

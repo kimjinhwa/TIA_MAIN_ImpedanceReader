@@ -133,4 +133,20 @@ extern const int measuredImpedance_1[20];
 extern const int measuredVoltage_1[20];
 extern const int measuredImpedance_2[20];
 extern const int measuredVoltage_2[20];
+
+#ifdef __cplusplus
+/** IN_TH1(GPIO34), IN_TH2(GPIO35) NTC — Modbus FC04 주소 16·17 (0.1°C) */
+extern int16_t ntcTemperatureC_x10[2];
+void ntcTemperatureInit(void);
+void ntcTemperatureUpdate(void);
+int16_t ntcTemperatureGetCx10(uint8_t sensorIndex);
+
+/** ADS1220 AIN2 CT 전류 — Modbus FC04 주소 18 (0.1A) */
+extern int16_t packCurrentA_x10;
+extern float packCurrentAin2Volts;
+void ctCurrentInit(void);
+void ctCurrentUpdate(void);
+float ctCurrentGetAmps(void);
+#endif
+
 #endif

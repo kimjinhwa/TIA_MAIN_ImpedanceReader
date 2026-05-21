@@ -10,6 +10,8 @@
 * zd1 -> 100Kohm으로 변경한다.
 
 
+
+
 ## 시스템설정
   * initEeprom
     EEPROM을 초기화 한다. 

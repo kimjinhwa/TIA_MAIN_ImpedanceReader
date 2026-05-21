@@ -69,7 +69,9 @@ void setSendbuffer(uint8_t fCode,uint16_t *sendValue){
     for(int i=0;i<20;i++){
       sendValue[i] = (uint16_t)(cellvalue[i].voltage *100);
     }
-    int16_t temperature; 
+    sendValue[16] = (uint16_t)ntcTemperatureC_x10[0];
+    sendValue[17] = (uint16_t)ntcTemperatureC_x10[1];
+    sendValue[18] = (uint16_t)packCurrentA_x10;
     for(int i=40;i<60;i++){
       sendValue[i] = cellvalue[i-40].temperature ;
       //*(sendValue+i) = (uint16_t)();

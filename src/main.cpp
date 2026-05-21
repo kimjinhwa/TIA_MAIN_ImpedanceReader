@@ -23,6 +23,8 @@
 #include "batDeviceInterface.h"
 #include <Mcp23s08.h>
 #include <Ads1220.h>
+#include "ntcTemperature.h"
+#include "ctCurrent.h"
 
 // #include <esp_int_wdt.h>
 // #include <esp_task.h>
@@ -104,6 +106,7 @@ void pinsetup()
     digitalWrite(CS_5940, HIGH);
     pinMode(RST_5940, OUTPUT);
     digitalWrite(RST_5940, HIGH);
+
 }
 void AD5940_Main(void *parameters);
 
@@ -656,6 +659,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
 static unsigned long now;
 static unsigned long previousVoltageMs = 0;
 static unsigned long lastImpedancePeriodMs = 0;
+static unsigned long lastNtcReadMs = 0;
+/** IN_TH1/IN_TH2 NTC 갱신 주기 */
+static const unsigned long NTC_READ_INTERVAL_MS = 2000;
 static bool s_impedanceSessionActive = false;
 static uint16_t s_impedanceSessionCell = 1;
 static uint16_t voltageRotateBatNo = 1;
@@ -666,6 +672,14 @@ void setup()
   EEPROM.begin((unsigned)EEPROM_NV_RESERVED_BYTES);
   readnWriteEEProm();
   pinsetup();
+  ntcTemperatureInit();
+  ntcTemperatureUpdate();
+  ctCurrentInit();
+  ctCurrentUpdate();
+  ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C",
+           ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f);
+  ESP_LOGI(TAG, "CT current=%.1f A (AIN2=%.4f V)",
+           ctCurrentGetAmps(), packCurrentAin2Volts);
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
 
@@ -740,6 +754,7 @@ void setup()
 #endif
   lastImpedancePeriodMs = millis();
   previousVoltageMs = millis();
+  lastNtcReadMs = millis();
   esp_task_wdt_init(WDT_TIMEOUT, true);
   esp_task_wdt_add(NULL);
 #ifdef WEBOTA
@@ -849,6 +864,16 @@ void loop(void)
     }
   }
 #endif
+
+  if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
+  {
+    lastNtcReadMs = now;
+    ntcTemperatureUpdate();
+    ctCurrentUpdate();
+    ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
+             ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
+             ctCurrentGetAmps(), packCurrentAin2Volts);
+  }
 
   vTaskDelay(100);
 }
