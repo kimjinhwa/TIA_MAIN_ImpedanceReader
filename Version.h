@@ -1,5 +1,16 @@
-#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
-// pBATCfg->bParaChanged = bTRUE; 
+#define VERSION "1.0.4" // 메인 루프에서 15개의 셀을 순환하는 루틴까지 완성함.  
+//#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// pBATCfg->bParaChanged = bTRUE; 을 사용하여 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// AppBATInit()이 시퀀서(SinFreq/WG)를 SRAM에 다시 쓰도록 함. 
+//#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// pBATCfg->bParaChanged = bTRUE; 을 사용하여 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// AppBATInit()이 시퀀서(SinFreq/WG)를 SRAM에 다시 쓰도록 함. 
+//#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// pBATCfg->bParaChanged = bTRUE; 을 사용하여 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// AppBATInit()이 시퀀서(SinFreq/WG)를 SRAM에 다시 쓰도록 함. 
+//#define VERSION "1.0.4" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// pBATCfg->bParaChanged = bTRUE; 을 사용하여 파형을 멈추고 전압을 읽는 루틴을 완성함.  
+// AppBATInit()이 시퀀서(SinFreq/WG)를 SRAM에 다시 쓰도록 함. 
 //efine VERSION "1.0.3" // 파형을 멈추고 전압을 읽는 루틴을 완성함.  
 //#define VERSION "1.0.3" // EEPROM 레이아웃 변경 
 //#define VERSION "1.0.3" // 전압 튜닝을 완료함. 

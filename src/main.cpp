@@ -68,6 +68,9 @@ BatDeviceInterface batDevice;
 
 //void AD5940_ShutDown();
 
+float AD5940_calibration(float *real , float *image);
+float AD5940_readImpMagnitude();
+void changeAD5940ToMeasurement(bool bChange);
 void pinsetup()
 {
     pinMode(READ_BATVOL, INPUT);
@@ -142,6 +145,17 @@ void readnWriteEEProm()
     systemDefaultValue.startBatnumber = systemDefaultValue.installed_cells;
   if(systemDefaultValue.startBatnumber == 0) 
   startBatnumber = 1;
+  ESP_LOGI(TAG, "Installed cells: %d", systemDefaultValue.installed_cells);
+  ESP_LOGI(TAG, "Start bat number: %d", systemDefaultValue.startBatnumber);
+  ESP_LOGI(TAG, "SSID: %s", systemDefaultValue.ssid);
+  ESP_LOGI(TAG, "SSID password: %s", systemDefaultValue.ssid_password);
+  ESP_LOGI(TAG, "User ID: %s", systemDefaultValue.userid);
+  ESP_LOGI(TAG, "User password: %s", systemDefaultValue.userpassword);
+  ESP_LOGI(TAG, "Run mode: %d", systemDefaultValue.runMode);
+  ESP_LOGI(TAG, "Modbus ID: %d", systemDefaultValue.modbusId);
+  ESP_LOGI(TAG, "Real calibration: %f", systemDefaultValue.real_Cal);
+  ESP_LOGI(TAG, "Image calibration: %f", systemDefaultValue.image_Cal);
+  ESP_LOGI(TAG, "Log level: %d", systemDefaultValue.logLevel);
 }
 
 void setupModbusAgentForexternal485(){
@@ -290,9 +304,26 @@ uint8_t get485Address()
   uint8_t address = address1 << 1 | address2;
   return address;
 }
+void readImpedanceNvoltageFromAD5940(int batNo){
+    changeAD5940ToMeasurement(true);
+    Mcp23s08_setOutput(mcpBatteryMuxPattern(batNo));
+    delay(2000); //14.6152 14.589  //
 
-float AD5940_calibration(float *real , float *image);
-float AD5940_readImpMagnitude();
+    ESP_LOGI(TAG, "scanBatteriesAds1220");
+    Ads1220_startSync();
+    (void)Ads1220_waitDrdy(ADS1220_DR_TIMEOUT_MS);
+    const int32_t vSample = Ads1220_readRaw();
+    float fVoltage1 = Ads1220_rawToVolts(vSample, 2.048, 1, 1.0); 
+    float fVoltage2 = Ads1220_rawToVoltsWithOffset(vSample, 1, 7.506);
+    ESP_LOGI(TAG, "fVoltage: %d, %.4f, %.4f", vSample, fVoltage1, fVoltage2);
+
+    /*For Test*/
+    changeAD5940ToMeasurement(false);
+    //AD5940_calibration(&real,&image);
+    float ImpMagnitude = AD5940_readImpMagnitude();
+    ESP_LOGI(TAG, "ImpMagnitude: %.4f", ImpMagnitude);
+    
+}
 void setup()
 {
 
@@ -353,32 +384,7 @@ void setup()
 
   //AD5940_ShutDown();
 
-  void changeAD5940ToMeasurement(bool bChange);
   Mcp23s08_setOutput(mcpBatteryMuxPattern(1));
-  for(int batNo=1;batNo<3;batNo++){
-    changeAD5940ToMeasurement(true);
-    Mcp23s08_setOutput(mcpBatteryMuxPattern(batNo));
-    //delay(700);   //14.5965. 14.581  //
-    //delay(800); //14.6068 14.580  //
-    //delay(900); //14.6152 14.589  //
-    delay(1000); //14.6152 14.589  //
-
-    ESP_LOGI(TAG, "scanBatteriesAds1220");
-    Ads1220_startSync();
-    (void)Ads1220_waitDrdy(ADS1220_DR_TIMEOUT_MS);
-    const int32_t vSample = Ads1220_readRaw();
-    float fVoltage1 = Ads1220_rawToVolts(vSample, 2.048, 1, 1.0); 
-    float fVoltage2 = Ads1220_rawToVoltsWithOffset(vSample, 1, 7.506);
-    ESP_LOGI(TAG, "fVoltage: %d, %.4f, %.4f", vSample, fVoltage1, fVoltage2);
-
-    /*For Test*/
-    changeAD5940ToMeasurement(false);
-    //AD5940_calibration(&real,&image);
-    float ImpMagnitude = AD5940_readImpMagnitude();
-    
-    if(batNo==2) batNo =0;
-    delay(2000);
-  }
 
   simpleCli.outputStream = &Serial;
   vTaskDelay(1000);
@@ -391,30 +397,30 @@ void setup()
 #endif
 
   xTaskCreate(blueToothTask, "blueToothTask", 5000, NULL, 1, h_pxblueToothTask);
-  xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
-  esp_log_level_t level;
-  switch (systemDefaultValue.logLevel)
-  {
-  case 0:
-    level = ESP_LOG_NONE;
-    break;
-  case 1:
-    ESP_LOG_ERROR;
-    break;
-  case 2:
-    ESP_LOG_WARN;
-    break;
-  case 3:
-    ESP_LOG_INFO;
-    break;
-  case 4:
-    ESP_LOG_DEBUG;
-    break;
-  case 5:
-    ESP_LOG_VERBOSE;
-    break;
-  }
-  esp_log_level_set("*", level);
+  //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
+  // esp_log_level_t level;
+  // switch (systemDefaultValue.logLevel)
+  // {
+  // case 0:
+  //   level = ESP_LOG_NONE;
+  //   break;
+  // case 1:
+  //   ESP_LOG_ERROR;
+  //   break;
+  // case 2:
+  //   ESP_LOG_WARN;
+  //   break;
+  // case 3:
+  //   ESP_LOG_INFO;
+  //   break;
+  // case 4:
+  //   ESP_LOG_DEBUG;
+  //   break;
+  // case 5:
+  //   ESP_LOG_VERBOSE;
+  //   break;
+  // }
+  //esp_log_level_set("*", level);
 };
 static unsigned long previousSecondmills = 0;
 static int everySecondInterval = 1000;
@@ -438,10 +444,10 @@ static unsigned long now;
 uint8_t impedanceCellPosition=1;
 static timeval tmv;
 int16_t logForHour=0;
-uint32_t loopCount=0;
+uint16_t currentBatNo=1;
 static bool isModuleBootingOK=false;
-static long elaspTime=-1;
 int toggle=0;
+int installedCells=2;
 void loop(void)
 {
   bool bRet;
@@ -453,10 +459,11 @@ void loop(void)
   esp_task_wdt_reset();
   if ((now - previousSecondmills > everySecondInterval))
   {
-    elaspTime++;
     toggle = toggle == 0 ? 1:0;
-    if( elaspTime%10 ==0 )
-      simpleCli.outputStream->printf("\nTime elasped : %d",elaspTime);
+    simpleCli.outputStream->printf("\nTime elasped : %ld ms\n",now/1000);
+    readImpedanceNvoltageFromAD5940(currentBatNo);
+    currentBatNo++;
+    if(currentBatNo>systemDefaultValue.installed_cells) currentBatNo=1;
     previousSecondmills = now;
   }
   if ((now - previous_3Secondmills > Interval_3Second))
@@ -467,13 +474,7 @@ void loop(void)
   {
         esp_task_wdt_reset();
         time_t startRead = millis();
-        scanBatteriesAds1220();
-        time_t endTime = millis();
-        parameters = simpleCli.outputStream;
-        simpleCli.outputStream->printf("\ntime:%ld  (%ldmili)\n",loopCount, endTime - startRead);
-        vTaskDelay(10);
-        //AD5940_Main(parameters); 
-        loopCount++;
+
         previous_5Secondmills = millis();
   }
   if ((now - previous_30Secondmills > Interval_30Second))

@@ -314,12 +314,22 @@ void LittleFileSystem::littleFsInitFast(int bformat){
       .partition_label = NULL,
       .max_files = 5,
       .format_if_mount_failed = true};
-  esp_err_t ret = esp_vfs_spiffs_register(&conf);
-
+  const uint32_t t0 = millis(); 
   if (bformat)
   {
     esp_spiffs_format(conf.partition_label);
   }
+
+  esp_err_t ret = esp_vfs_spiffs_register(&conf);
+  //이부분을 추가한다.
+  if (ret != ESP_OK && !bformat)
+  {
+    // Fast boot path: if plain mount fails, retry once with format recovery.
+    conf.format_if_mount_failed = true;
+    ret = esp_vfs_spiffs_register(&conf);
+  }
+
+
   if (ret != ESP_OK)
   {
     if (ret == ESP_FAIL)
@@ -336,6 +346,19 @@ void LittleFileSystem::littleFsInitFast(int bformat){
     }
     return;
   }
+  // Full filesystem check is expensive; run only in explicit format path.
+  if (bformat)
+  {
+    printf("\r\nPerforming SPIFFS_check().");
+    ret = esp_spiffs_check(conf.partition_label);
+    if (ret != ESP_OK)
+    {
+      printf("\r\nSPIFFS_check() failed (%s)", esp_err_to_name(ret));
+      return;
+    }
+    printf("\r\nSPIFFS_check() successful");
+  }
+
   size_t total = 0, used = 0;
   ret = esp_spiffs_info(conf.partition_label, &total, &used);
   if (ret != ESP_OK)
@@ -347,6 +370,7 @@ void LittleFileSystem::littleFsInitFast(int bformat){
   else
   {
     outputStream->printf("\r\nPartition size: total: %d, used: %d", total, used);
+    outputStream->printf("\r\nlittleFsInit done in %lu ms\n", static_cast<unsigned long>(millis() - t0));
   }
 
 }
