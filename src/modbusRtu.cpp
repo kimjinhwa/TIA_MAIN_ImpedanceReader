@@ -6,9 +6,43 @@
 #include <RtcDS1302.h>
 #include <ModbusClientRTU.h>
 
-ModbusMessage  syncRequestCellModule(uint32_t token,uint8_t modbusId, uint8_t fCode,uint16_t startAddress, uint16_t len);
-
 char strErrorMessage[40];
+
+/**
+ * 하위 셀 모듈(Modbus 클라이언트) 동기 요청.
+ * 별도 RTU 클라이언트·브리지가 없으면 스텁 응답(빌드·FC01 안전).
+ */
+ModbusMessage syncRequestCellModule(uint32_t token, uint8_t modbusId, uint8_t fCode,
+                                    uint16_t startAddress, uint16_t len)
+{
+  (void)token;
+  ESP_LOGW("MODBUS", "syncRequestCellModule stub: id=%u fc=%u addr=%u data=%u",
+           modbusId, fCode, startAddress, len);
+
+  ModbusMessage rsp;
+  switch (fCode)
+  {
+  case READ_COIL:
+    rsp.add(modbusId, READ_COIL);
+    rsp.add((uint8_t)1);
+    rsp.add((uint8_t)0);
+    break;
+  case WRITE_COIL:
+    rsp.add(modbusId, WRITE_COIL);
+    rsp.add(startAddress);
+    rsp.add(len);
+    break;
+  case WRITE_HOLD_REGISTER:
+    rsp.add(modbusId, WRITE_HOLD_REGISTER);
+    rsp.add(startAddress);
+    rsp.add(len);
+    break;
+  default:
+    rsp.setError(modbusId, fCode, ILLEGAL_FUNCTION);
+    break;
+  }
+  return rsp;
+}
 void setErrorMessageToModbus(bool setError,const char* msg)
 {
   memset(strErrorMessage,0x00,sizeof(strErrorMessage));

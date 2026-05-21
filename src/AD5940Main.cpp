@@ -28,8 +28,8 @@ Analog Devices Software License Agreement.
 
 #define MAX_LOOP_COUNT 100
 #define APPBUFF_SIZE 512
-#define CAL_TOTAL_SAMPLES 10
-#define CAL_SKIP_SAMPLES 5 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
+#define CAL_TOTAL_SAMPLES 20
+#define CAL_SKIP_SAMPLES 10 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
 
 static Print *outputStream;
 uint32_t AppBuff[APPBUFF_SIZE];
@@ -593,12 +593,11 @@ void AD5940_init(){
   //AD5940_ShutDown();
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
 }
-float AD5940_readImpMagnitude()
+float AD5940_readImpMagnitude(fImpCar_Type *pCarOut)
 {
+  AppBATInit(AppBuff, APPBUFF_SIZE);
 
-  AppBATInit(AppBuff, APPBUFF_SIZE); /* Initialize BAT application. Provide a buffer, which is used to store sequencer commands */
-
-  time_t startTime = millis();
+  const time_t startTime = millis();
   if (AD5940ERR_WAKEUP == AppBATCtrl(BATCTRL_START, 0))
   {
     ESP_LOGW(TAG, "readImp: BATCTRL_START wakeup failed");
@@ -626,11 +625,15 @@ float AD5940_readImpMagnitude()
   if (temp == 0)
   {
     ESP_LOGW(TAG, "readImp: AppBATISR returned no battery data");
+    AppBATCtrl(BATCTRL_STOPNOW, 0);
     return 0.0f;
   }
 
-  BATShowResult(AppBuff, temp);
   fImpCar_Type *pImp = (fImpCar_Type *)AppBuff;
+  if (pCarOut != NULL)
+    *pCarOut = pImp[0];
+
+  AppBATCtrl(BATCTRL_STOPNOW, 0);
   return AD5940_ComplexMag(&pImp[0]);
 }
 

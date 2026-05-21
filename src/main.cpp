@@ -70,7 +70,7 @@ BatDeviceInterface batDevice;
 //void AD5940_ShutDown();
 
 float AD5940_calibration(float *real , float *image);
-float AD5940_readImpMagnitude();
+float AD5940_readImpMagnitude(fImpCar_Type *pCarOut);
 void changeAD5940ToMeasurement(bool bChange);
 uint8_t get485Address();
 
@@ -140,6 +140,7 @@ void readnWriteEEProm()
     systemDefaultValue.image_Cal = 35511.0f;
     systemDefaultValue.logLevel = ESP_LOG_INFO;
     systemDefaultValue.startBatnumber = 1;
+    systemDefaultValue.ImpedanceMeasurePeriod = 3600; /* 초, 0이면 런타임 기본 3600 */
     eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
   }
@@ -231,20 +232,63 @@ void initCellValue()
 #define ADS1220_DR_TIMEOUT_MS 500
 #define ADS1220_INTER_SAMPLE_US 50
 
-/** MUX·아날로그 안정화 (ms). */
+/** MUX·아날로그 안정화: 임피던스 측정 (ms). */
 #define MUX_IMPEDANCE_SETTLE_MS 2000
+/** 전압만 읽을 때: setOutput 후 RC·MUX 안정화 (ms). */
+#define MUX_VOLTAGE_SETTLE_MS 1000
 
-/**
- * AD5940 임피던스 1회 측정 ≈ 수백 ms~수 초. 2 이상이면 셀당 시간이 급증하므로
- * 방문당 1회 + CELL_MEAS_FILTER_DEPTH 링으로 스캔 간 평균을 권장.
- */
-#define CELL_IMP_SAMPLES_PER_VISIT 1
+/** 전압: 3초 주기, 방문당 버스트 평균. */
+#define CELL_VOLTAGE_INTERVAL_MS 3000
+#define CELL_VOLT_BURST_SAMPLES 5
+#define CELL_VOLT_BURST_GAP_MS 10
 
-/** 스캔 사이클 간 이동 평균 깊이(셀당). ADC 내부 평균과 역할이 다름 — 시간축 스무딩. */
-#define CELL_MEAS_FILTER_DEPTH 4
+/** changeAD5940ToMeasurement(false) 직후 readImp() 전 (ms). */
+#define AD5940_SETTLE_AFTER_OFF_MS 150
 
-/** 미장착·저전압 셀: 임피던스 무효 (mΩ). */
+/** 임피던스: EEPROM ImpedanceMeasurePeriod(초), 0 → 기본 1시간. */
+#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600
+#define IMP_READ_MAX 60
+#define IMP_STABLE_WINDOW 5
+/** 3% 이내 5샘플 창 = 비충전·유효 Z. 그 외(충전 등)는 EEPROM 값 사용. */
+#define IMP_STABLE_REL_TOL 0.03f
+#define IMP_POST_STABLE_SAMPLES 5
+#define IMP_MAG_MIN_VALID_MOHM 5.0f
+/** EEPROM 갱신: 기존 대비 **5% 이상 변화**(증가·감소) 시만 (셀 교체·결선 수정 등 반영). */
+#define IMP_EEPROM_MIN_CHANGE_RATIO 0.05f
+
+/** 1: 3초마다 전압+임피던스 함께(충전 테스트). 0: 전압 3초 / 임피던스 주기 분리. */
+#define MEASURE_TEST_COMBINED_VZ 1
+/** 1: Z 워밍업 매 회차 #01~#N 로그 (충전 모니터링). */
+#define IMP_MONITOR_LOG_ALL 1
+
+/** scanBatteriesAds1220 전압 스무딩용. */
+#define CELL_MEAS_FILTER_DEPTH 2
+
+/** 미장착·저전압 셀: 임피던스 무효 (V). */
 #define CELL_VOLTAGE_IMP_VALID_MIN_V 0.6f
+
+/** 측정 순환 셀 수. 0 = EEPROM installed_cells(현장 15 등), 양수 = 검증용 고정. */
+#define MEASURE_ACTIVE_CELLS 0
+
+static uint16_t measureActiveCellCount(void)
+{
+  uint16_t n;
+  if (MEASURE_ACTIVE_CELLS > 0)
+    n = (uint16_t)MEASURE_ACTIVE_CELLS;
+  else
+    n = systemDefaultValue.installed_cells;
+  if (n < 1)
+    n = 1;
+  if (n > MAX_INSTALLED_CELLS)
+    n = MAX_INSTALLED_CELLS;
+  return n;
+}
+
+/** 미장착·무전압: 이 전압 미만이면 Z 측정 생략. */
+static bool cellVoltageAllowsImpedanceV(float v)
+{
+  return v >= CELL_VOLTAGE_IMP_VALID_MIN_V;
+}
 
 static float s_cellVoltRing[MAX_INSTALLED_CELLS][CELL_MEAS_FILTER_DEPTH];
 static uint8_t s_cellVoltRingIdx[MAX_INSTALLED_CELLS];
@@ -255,6 +299,24 @@ static float s_cellImpRing[MAX_INSTALLED_CELLS][CELL_MEAS_FILTER_DEPTH];
 static uint8_t s_cellImpRingIdx[MAX_INSTALLED_CELLS];
 static uint8_t s_cellImpRingCount[MAX_INSTALLED_CELLS];
 static float s_cellImpRingSum[MAX_INSTALLED_CELLS];
+
+static void resetCellMeasurementFilters(void)
+{
+  for (unsigned i = 0; i < MAX_INSTALLED_CELLS; i++)
+  {
+    s_cellVoltRingIdx[i] = 0;
+    s_cellVoltRingCount[i] = 0;
+    s_cellVoltRingSum[i] = 0.0f;
+    s_cellImpRingIdx[i] = 0;
+    s_cellImpRingCount[i] = 0;
+    s_cellImpRingSum[i] = 0.0f;
+    for (uint8_t k = 0; k < CELL_MEAS_FILTER_DEPTH; k++)
+    {
+      s_cellVoltRing[i][k] = 0.0f;
+      s_cellImpRing[i][k] = 0.0f;
+    }
+  }
+}
 
 static float cellRingPush(float *ring, uint8_t *pIdx, uint8_t *pCount, float *pSum, float x)
 {
@@ -298,10 +360,7 @@ void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
         0, ADS1220_SAMPLES_PER_CELL, ADS1220_DR_TIMEOUT_MS, ADS1220_INTER_SAMPLE_US);
     cellvalue[i].voltage = cellRingPush(
         s_cellVoltRing[i], &s_cellVoltRingIdx[i], &s_cellVoltRingCount[i], &s_cellVoltRingSum[i], vSample);
-
-    const float zSample = cellvalue[i].impendance;
-    cellvalue[i].impendance = cellRingPush(
-        s_cellImpRing[i], &s_cellImpRingIdx[i], &s_cellImpRingCount[i], &s_cellImpRingSum[i], zSample);
+    /* 임피던스는 AD5940 실측만 링에 넣음 — initCellValue 더미값이 섞이면 1회차 Z가 깨짐 */
   }
   ESP_LOGI(TAG, "ADS1220 cell scan: %u cells, %lums", (unsigned)nCells, (unsigned long)(millis() - t0));
 }
@@ -319,57 +378,288 @@ uint8_t get485Address()
   uint8_t address = address1 << 1 | address2;
   return address;
 }
-void readImpedanceNvoltageFromAD5940(int batNo)
+/** MUX 안정화 후 ADS1220 단일 변환 전압(V). */
+static float readCellVoltageOnce(void)
 {
-  if (batNo < 1 || batNo > (int)systemDefaultValue.installed_cells)
-  {
-    ESP_LOGW(TAG, "readImpedanceNvoltage: invalid batNo %d", batNo);
+  return Ads1220_readAveragedVoltageOnChannel(
+      0, 1, ADS1220_DR_TIMEOUT_MS, 0);
+}
+
+static uint32_t impedanceMeasurePeriodMs(void)
+{
+  uint32_t sec = (uint32_t)systemDefaultValue.ImpedanceMeasurePeriod;
+  if (sec == 0)
+    sec = IMP_MEASURE_PERIOD_DEFAULT_SEC;
+  return sec * 1000UL;
+}
+
+static bool impSampleUsable(const fImpCar_Type *car)
+{
+  if (car == NULL)
+    return false;
+  const float mag = AD5940_ComplexMag((fImpCar_Type *)car);
+  return (car->Real > 0.0f) && (mag >= IMP_MAG_MIN_VALID_MOHM);
+}
+
+/** EEPROM baseImpendance[] 인코딩: mOhm × 100 (Modbus FC04 80~99와 동일). */
+static int16_t impMohmToEepromCenti(float z_mOhm)
+{
+  if (z_mOhm <= 0.0f)
+    return 0;
+  const int32_t v = (int32_t)(z_mOhm * 100.0f + 0.5f);
+  if (v > 32767)
+    return 32767;
+  return (int16_t)v;
+}
+
+static float impEepromCentiToMohm(int16_t centi)
+{
+  if (centi <= 0)
+    return 0.0f;
+  return (float)centi / 100.0f;
+}
+
+static void applyCellImpedanceFromEeprom(unsigned batNo)
+{
+  const uint16_t nActive = measureActiveCellCount();
+  if (batNo < 1 || batNo > (int)nActive)
     return;
+  const unsigned idx = (unsigned)(batNo - 1);
+  const float z = impEepromCentiToMohm(systemDefaultValue.baseImpendance[idx]);
+  if (z <= 0.0f)
+    return;
+  cellvalue[idx].impendance = z;
+  cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
+}
+
+static void applyAllCellImpedanceFromEeprom(void)
+{
+  const uint16_t n = measureActiveCellCount();
+  for (uint16_t c = 1; c <= n; c++)
+    applyCellImpedanceFromEeprom((int)c);
+}
+
+/** oldC 대비 newC 변화량이 IMP_EEPROM_MIN_CHANGE_RATIO 이상인지 (정수 centi-mOhm). */
+static bool impEepromChangeEnough(int16_t oldC, int16_t newC)
+{
+  if (oldC <= 0)
+    return true;
+  if (newC == oldC)
+    return false;
+  const int64_t delta = (int64_t)newC - (int64_t)oldC;
+  const int64_t absDelta = delta < 0 ? -delta : delta;
+  const int64_t minDelta = (int64_t)((float)oldC * IMP_EEPROM_MIN_CHANGE_RATIO + 0.5f);
+  return absDelta >= minDelta;
+}
+
+/** 유효 Z 측정 성공 시: 기존 EEPROM과 5% 이상 다를 때만 저장. */
+static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
+{
+  const unsigned idx = (unsigned)(batNo - 1);
+  const int16_t newC = impMohmToEepromCenti(z_mOhm);
+  const int16_t oldC = systemDefaultValue.baseImpendance[idx];
+
+  if (newC <= 0)
+    return false;
+
+  if (oldC > 0 && !impEepromChangeEnough(oldC, newC))
+  {
+    const float oldM = impEepromCentiToMohm(oldC);
+    const float pct = oldM > 0.0f ? ((z_mOhm - oldM) / oldM) * 100.0f : 0.0f;
+    ESP_LOGI(TAG,
+             "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
+             (unsigned)batNo, oldM, z_mOhm, pct, IMP_EEPROM_MIN_CHANGE_RATIO * 100.0f);
+    return false;
   }
+
+  systemDefaultValue.baseImpendance[idx] = newC;
+  eepromNvsWriteBlock(&systemDefaultValue);
+  EEPROM.commit();
+  cellvalue[idx].baseImpendance = newC;
+  ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
+           (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
+  return true;
+}
+
+/** 연속 5샘플 창 [startIdx .. startIdx+4]: 첫·끝 상대오차 + max-min. */
+static bool impWindowIsStable(fImpCar_Type *samples, int startIdx)
+{
+  for (int k = 0; k < IMP_STABLE_WINDOW; k++)
+  {
+    if (!impSampleUsable(&samples[startIdx + k]))
+      return false;
+  }
+
+  const float z0 = AD5940_ComplexMag(&samples[startIdx]);
+  const float z4 = AD5940_ComplexMag(&samples[startIdx + IMP_STABLE_WINDOW - 1]);
+  const float denom = fmaxf(z0, z4);
+  if (denom < IMP_MAG_MIN_VALID_MOHM)
+    return false;
+  if (fabsf(z4 - z0) / denom > IMP_STABLE_REL_TOL)
+    return false;
+
+  float mn = z0;
+  float mx = z0;
+  for (int k = 0; k < IMP_STABLE_WINDOW; k++)
+  {
+    const float z = AD5940_ComplexMag(&samples[startIdx + k]);
+    if (z < mn)
+      mn = z;
+    if (z > mx)
+      mx = z;
+  }
+  return ((mx - mn) / denom) <= IMP_STABLE_REL_TOL;
+}
+
+/**
+ * 셀 전압 측정(ADS1220 버스트 평균 → 순환 필터 → cellvalue).
+ * @return 필터 적용 후 전압(V). 범위 밖 batNo면 0.
+ */
+static float readCellVoltageForBat(int batNo)
+{
+  const uint16_t nActive = measureActiveCellCount();
+  if (batNo < 1 || batNo > (int)nActive)
+    return 0.0f;
   const unsigned idx = (unsigned)(batNo - 1);
 
   changeAD5940ToMeasurement(true);
   Mcp23s08_setOutput(mcpBatteryMuxPattern((unsigned)batNo));
-  delay(MUX_IMPEDANCE_SETTLE_MS);
+  delay(MUX_VOLTAGE_SETTLE_MS);
 
-  const float vSample = Ads1220_readAveragedVoltageOnChannel(
-      0, ADS1220_SAMPLES_PER_CELL, ADS1220_DR_TIMEOUT_MS, ADS1220_INTER_SAMPLE_US);
-
+  float vSum = 0.0f;
+  for (uint8_t s = 0; s < (uint8_t)CELL_VOLT_BURST_SAMPLES; s++)
+  {
+    if (s > 0)
+      delay(CELL_VOLT_BURST_GAP_MS);
+    vSum += readCellVoltageOnce();
+  }
+  const float vAvg = vSum / (float)CELL_VOLT_BURST_SAMPLES;
   changeAD5940ToMeasurement(false);
 
-  float impSum = 0.0f;
-  uint8_t impCount = 0;
-  for (uint8_t s = 0; s < (uint8_t)CELL_IMP_SAMPLES_PER_VISIT; s++)
-  {
-    const float z = AD5940_readImpMagnitude();
-    if (z > 0.0f)
-    {
-      impSum += z;
-      impCount++;
-    }
-    if (s + 1u < (uint8_t)CELL_IMP_SAMPLES_PER_VISIT)
-      delay(50);
-  }
-  float zSample = (impCount > 0) ? (impSum / (float)impCount) : 0.0f;
-  if (vSample < CELL_VOLTAGE_IMP_VALID_MIN_V)
-    zSample = 0.0f;
+  const float vFiltered = cellRingPush(
+      s_cellVoltRing[idx], &s_cellVoltRingIdx[idx], &s_cellVoltRingCount[idx],
+      &s_cellVoltRingSum[idx], vAvg);
+  cellvalue[idx].voltage = vFiltered;
 
-  cellvalue[idx].voltage = cellRingPush(
-      s_cellVoltRing[idx], &s_cellVoltRingIdx[idx], &s_cellVoltRingCount[idx], &s_cellVoltRingSum[idx], vSample);
-  cellvalue[idx].impendance = cellRingPush(
-      s_cellImpRing[idx], &s_cellImpRingIdx[idx], &s_cellImpRingCount[idx], &s_cellImpRingSum[idx], zSample);
-
-  struct timeval tmv;
-  gettimeofday(&tmv, NULL);
-  cellvalue[idx].readTime = tmv.tv_sec;
-  cellvalue[idx].voltageCompensation = systemDefaultValue.voltageCompensation[idx];
-  cellvalue[idx].impendanceCompensation = systemDefaultValue.impendanceCompensation[idx];
-  cellvalue[idx].baseVoltage = systemDefaultValue.baseVoltage[idx];
-  cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
-
-  ESP_LOGI(TAG, "cell %u: V=%.4f V Z=%.3f mOhm (raw Z=%.3f)", (unsigned)(idx + 1),
-           cellvalue[idx].voltage, cellvalue[idx].impendance, zSample);
+  ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
+  return vFiltered;
 }
+
+/**
+ * 임피던스: 최대 IMP_READ_MAX회, 5샘플 창 안정 후 5회 추가 평균.
+ * @return true면 *outZ에 mΩ 저장; false면 이전값 유지
+ */
+static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
+{
+  const uint16_t nActive = measureActiveCellCount();
+  if (batNo < 1 || batNo > (int)nActive || outZ == NULL)
+    return false;
+  const unsigned idx = (unsigned)(batNo - 1);
+  const float prevZ = cellvalue[idx].impendance;
+
+  if (!cellVoltageAllowsImpedanceV(cellvalue[idx].voltage))
+  {
+    cellvalue[idx].impendance = 0.0f;
+    *outZ = 0.0f;
+    ESP_LOGI(TAG, "cell %u Z skipped — no battery (V=%.4f < %.2f V)",
+             (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
+    return false;
+  }
+
+  changeAD5940ToMeasurement(false);
+  Mcp23s08_setOutput(mcpBatteryMuxPattern((unsigned)batNo));
+  delay(MUX_IMPEDANCE_SETTLE_MS);
+  delay(AD5940_SETTLE_AFTER_OFF_MS);
+
+#if IMP_MONITOR_LOG_ALL
+  ESP_LOGI(TAG, "cell %u Z monitor start (max %d reads)", (unsigned)batNo, IMP_READ_MAX);
+#endif
+
+  fImpCar_Type samples[IMP_READ_MAX + IMP_POST_STABLE_SAMPLES];
+  int nSamples = 0;
+
+  for (int i = 0; i < IMP_READ_MAX; i++)
+  {
+    fImpCar_Type car;
+    const float mag = AD5940_readImpMagnitude(&car);
+#if IMP_MONITOR_LOG_ALL
+    ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
+             (unsigned)batNo, i + 1, mag, car.Real, car.Image);
+#endif
+    if (!impSampleUsable(&car))
+    {
+#if !IMP_MONITOR_LOG_ALL
+      ESP_LOGD(TAG, "cell %u Z #%d: skip (mag=%.3f real=%.3f)",
+               (unsigned)batNo, i + 1, mag, car.Real);
+#endif
+      continue;
+    }
+    samples[nSamples++] = car;
+
+    if (nSamples >= IMP_STABLE_WINDOW)
+    {
+      const int winStart = nSamples - IMP_STABLE_WINDOW;
+      if (!impWindowIsStable(samples, winStart))
+        continue;
+
+      float sum = 0.0f;
+      int postCount = 0;
+      for (int p = 0; p < IMP_POST_STABLE_SAMPLES; p++)
+      {
+        fImpCar_Type postCar;
+        const float postMag = AD5940_readImpMagnitude(&postCar);
+#if IMP_MONITOR_LOG_ALL
+        ESP_LOGI(TAG, "  cell %u Z post #%d: %.3f mOhm", (unsigned)batNo, postCount + 1, postMag);
+#endif
+        if (!impSampleUsable(&postCar))
+          continue;
+        sum += postMag;
+        postCount++;
+      }
+
+      if (postCount > 0)
+      {
+        *outZ = sum / (float)postCount;
+        cellvalue[idx].impendance = cellRingPush(
+            s_cellImpRing[idx], &s_cellImpRingIdx[idx], &s_cellImpRingCount[idx],
+            &s_cellImpRingSum[idx], *outZ);
+
+        struct timeval tmv;
+        gettimeofday(&tmv, NULL);
+        cellvalue[idx].readTime = tmv.tv_sec;
+        cellvalue[idx].voltageCompensation = systemDefaultValue.voltageCompensation[idx];
+        cellvalue[idx].impendanceCompensation = systemDefaultValue.impendanceCompensation[idx];
+        cellvalue[idx].baseVoltage = systemDefaultValue.baseVoltage[idx];
+        cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
+
+        ESP_LOGI(TAG,
+                 "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
+                 (unsigned)batNo, cellvalue[idx].impendance, winStart + IMP_STABLE_WINDOW,
+                 postCount, i + 1 + postCount);
+        tryPersistCellImpedanceToEeprom((unsigned)batNo, cellvalue[idx].impendance);
+        return true;
+      }
+    }
+  }
+
+  applyCellImpedanceFromEeprom((unsigned)batNo);
+  *outZ = cellvalue[idx].impendance;
+  if (*outZ <= 0.0f)
+    *outZ = prevZ;
+
+  ESP_LOGW(TAG,
+           "cell %u Z: not stable in %d reads (likely charging) — using EEPROM %.3f mOhm",
+           (unsigned)batNo, IMP_READ_MAX, *outZ);
+  return false;
+}
+
+static unsigned long now;
+static unsigned long previousVoltageMs = 0;
+static unsigned long lastImpedancePeriodMs = 0;
+static bool s_impedanceSessionActive = false;
+static uint16_t s_impedanceSessionCell = 1;
+static uint16_t voltageRotateBatNo = 1;
+
 void setup()
 {
 
@@ -410,6 +700,7 @@ void setup()
   Ads1220_reset();
   Mcp23s08_initOutputsAll();
   initCellValue();
+  applyAllCellImpedanceFromEeprom();
   Mcp23s08_setOutput(mcpBatteryMuxPattern(0));
   //for(int i=0;i<1;i){
   scanBatteriesAds1220(1);
@@ -427,6 +718,7 @@ void setup()
 
   float real , image;
   float ImpMagnitude = AD5940_calibration(&real,&image);
+  resetCellMeasurementFilters();
 
   //AD5940_ShutDown();
 
@@ -436,6 +728,18 @@ void setup()
   vTaskDelay(1000);
   ESP_LOGI(TAG, "System Started at %s mode", systemDefaultValue.runMode == 0 ? "Manual" : "Auto");
   ESP_LOGI(TAG, "\nEEPROM installed Bat number %d", systemDefaultValue.installed_cells);
+  ESP_LOGI(TAG, "Active measure cells: %u (MEASURE_ACTIVE_CELLS=%d)",
+           (unsigned)measureActiveCellCount(), MEASURE_ACTIVE_CELLS);
+#if MEASURE_TEST_COMBINED_VZ
+  ESP_LOGI(TAG, "TEST: every %ums V+Z together, Z max %d reads (charger monitor)",
+           (unsigned)CELL_VOLTAGE_INTERVAL_MS, IMP_READ_MAX);
+#else
+  ESP_LOGI(TAG, "Voltage interval %ums, impedance period %lus (EEPROM ImpedanceMeasurePeriod)",
+           (unsigned)CELL_VOLTAGE_INTERVAL_MS,
+           (unsigned long)(impedanceMeasurePeriodMs() / 1000UL));
+#endif
+  lastImpedancePeriodMs = millis();
+  previousVoltageMs = millis();
   esp_task_wdt_init(WDT_TIMEOUT, true);
   esp_task_wdt_add(NULL);
 #ifdef WEBOTA
@@ -470,68 +774,81 @@ void setup()
   // }
   //esp_log_level_set("*", level);
 };
-static unsigned long previousSecondmills = 0;
-static int everySecondInterval = 1000;
 
-static int Interval_3Second = 3000;
-static unsigned long previous_3Secondmills = 0;
-
-static int Interval_5Second = 5000;
-static unsigned long previous_5Secondmills = 0;
-
-static int Interval_30Second = 30000;
-static unsigned long previous_30Secondmills = 0;
-
-static int Interval_60Second = 60000;
-static unsigned long previous_60Secondmills = 0;
-
-static unsigned long now;
-//각각의 시간은 병렬로 수행된다.
-
-//uint8_t globalModbusId =1;
-uint8_t impedanceCellPosition=1;
-static timeval tmv;
-int16_t logForHour=0;
-uint16_t currentBatNo=1;
-static bool isModuleBootingOK=false;
-int toggle=0;
-int installedCells=2;
 void loop(void)
 {
-  bool bRet;
-  void *parameters;
-  esp_log_level_set("*",ESP_LOG_INFO);
-  parameters = simpleCli.outputStream;
-  now = millis(); 
-
+  esp_log_level_set("*", ESP_LOG_INFO);
+  now = millis();
   esp_task_wdt_reset();
-  if ((now - previousSecondmills > everySecondInterval))
-  {
-    toggle = toggle == 0 ? 1:0;
-    simpleCli.outputStream->printf("\nTime elapsed : %ld s\n", now / 1000);
-    readImpedanceNvoltageFromAD5940(currentBatNo);
-    currentBatNo++;
-    if(currentBatNo>systemDefaultValue.installed_cells) currentBatNo=1;
-    previousSecondmills = now;
-  }
-  if ((now - previous_3Secondmills > Interval_3Second))
-  {
-    previous_3Secondmills= now;
-  }
-  if ((now - previous_5Secondmills > Interval_5Second) )
-  {
-        esp_task_wdt_reset();
-        time_t startRead = millis();
 
-        previous_5Secondmills = millis();
-  }
-  if ((now - previous_30Secondmills > Interval_30Second))
+#if MEASURE_TEST_COMBINED_VZ
+  if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
   {
-    previous_30Secondmills= now;
+    const int bat = (int)voltageRotateBatNo;
+    const unsigned idx = (unsigned)(bat - 1);
+    const float v = readCellVoltageForBat(bat);
+    const bool hasBat = cellVoltageAllowsImpedanceV(v);
+    if (hasBat)
+    {
+      float zDummy = 0.0f;
+      readCellImpedanceWithWarmup(bat, &zDummy);
+      previousVoltageMs = now;
+    }
+    else
+    {
+      cellvalue[idx].impendance = 0.0f;
+      /* 무전압: 3초 대기 없이 다음 셀 */
+      previousVoltageMs = 0;
+    }
+    voltageRotateBatNo++;
+    if (voltageRotateBatNo > measureActiveCellCount())
+      voltageRotateBatNo = 1;
+    esp_task_wdt_reset();
   }
-  if ((now - previous_60Secondmills > Interval_60Second))
+#else
+  if (s_impedanceSessionActive)
   {
-    previous_60Secondmills= now;
+    const int bat = (int)s_impedanceSessionCell;
+    const float v = readCellVoltageForBat(bat);
+    float zDummy = 0.0f;
+    if (cellVoltageAllowsImpedanceV(v))
+      readCellImpedanceWithWarmup(bat, &zDummy);
+    s_impedanceSessionCell++;
+    if (s_impedanceSessionCell > measureActiveCellCount())
+    {
+      s_impedanceSessionActive = false;
+      ESP_LOGI(TAG, "impedance round complete (%u cells)", (unsigned)measureActiveCellCount());
+    }
   }
+  else
+  {
+    const uint32_t impPeriodMs = impedanceMeasurePeriodMs();
+    if ((now - lastImpedancePeriodMs) >= impPeriodMs)
+    {
+      lastImpedancePeriodMs = now;
+      s_impedanceSessionActive = true;
+      s_impedanceSessionCell = 1;
+      ESP_LOGI(TAG, "impedance session start (period %lu s)", (unsigned long)(impPeriodMs / 1000UL));
+    }
+
+    if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
+    {
+      const int bat = (int)voltageRotateBatNo;
+      const unsigned idx = (unsigned)(bat - 1);
+      const float v = readCellVoltageForBat(bat);
+      if (cellVoltageAllowsImpedanceV(v))
+        previousVoltageMs = now;
+      else
+      {
+        cellvalue[idx].impendance = 0.0f;
+        previousVoltageMs = 0;
+      }
+      voltageRotateBatNo++;
+      if (voltageRotateBatNo > measureActiveCellCount())
+        voltageRotateBatNo = 1;
+    }
+  }
+#endif
+
   vTaskDelay(100);
 }

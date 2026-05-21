@@ -10,6 +10,9 @@ ModbusMessage FC04(ModbusMessage request) ;
 ModbusMessage FC05(ModbusMessage request) ;
 ModbusMessage FC06(ModbusMessage request) ;
 
+ModbusMessage syncRequestCellModule(uint32_t token, uint8_t modbusId, uint8_t fCode,
+                                    uint16_t startAddress, uint16_t len);
+
 // //사용법
 // //#include "modbusRtu.h"
 // //전역

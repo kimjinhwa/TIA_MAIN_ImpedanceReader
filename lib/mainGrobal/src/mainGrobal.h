@@ -82,7 +82,7 @@ typedef struct
     uint8_t ImpedanceFactor;
     uint8_t VoltageFactor;
     uint8_t TemperatureFactor;
-    uint16_t ImpedanceMeasurePeriod;
+    uint16_t ImpedanceMeasurePeriod; /* 초, 0=기본 3600(1시간) */
     uint16_t year;
     uint16_t month;
     uint16_t day;
