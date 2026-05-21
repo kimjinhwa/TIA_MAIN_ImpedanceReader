@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <sys/time.h>
 #include <SPI.h>
 #include <EEPROM.h>
 #include <wifi.h>
@@ -71,6 +72,8 @@ BatDeviceInterface batDevice;
 float AD5940_calibration(float *real , float *image);
 float AD5940_readImpMagnitude();
 void changeAD5940ToMeasurement(bool bChange);
+uint8_t get485Address();
+
 void pinsetup()
 {
     pinMode(READ_BATVOL, INPUT);
@@ -160,10 +163,10 @@ void readnWriteEEProm()
 
 void setupModbusAgentForexternal485(){
   //address는 항상 1이다.
-  uint8_t address_485 = systemDefaultValue.modbusId; 
+  uint8_t address_485 = get485Address();
 
   //external485.useStopControll =0;
-  external485.begin(Serial1,115200,1,2000);
+  external485.begin(Serial1,9600,1,2000);
   external485.registerWorker(address_485,READ_COIL,&FC01);
   external485.registerWorker(address_485,READ_HOLD_REGISTER,&FC03);
   external485.registerWorker(address_485,READ_INPUT_REGISTER,&FC04);
@@ -228,8 +231,20 @@ void initCellValue()
 #define ADS1220_DR_TIMEOUT_MS 500
 #define ADS1220_INTER_SAMPLE_US 50
 
+/** MUX·아날로그 안정화 (ms). */
+#define MUX_IMPEDANCE_SETTLE_MS 2000
+
+/**
+ * AD5940 임피던스 1회 측정 ≈ 수백 ms~수 초. 2 이상이면 셀당 시간이 급증하므로
+ * 방문당 1회 + CELL_MEAS_FILTER_DEPTH 링으로 스캔 간 평균을 권장.
+ */
+#define CELL_IMP_SAMPLES_PER_VISIT 1
+
 /** 스캔 사이클 간 이동 평균 깊이(셀당). ADC 내부 평균과 역할이 다름 — 시간축 스무딩. */
 #define CELL_MEAS_FILTER_DEPTH 4
+
+/** 미장착·저전압 셀: 임피던스 무효 (mΩ). */
+#define CELL_VOLTAGE_IMP_VALID_MIN_V 0.6f
 
 static float s_cellVoltRing[MAX_INSTALLED_CELLS][CELL_MEAS_FILTER_DEPTH];
 static uint8_t s_cellVoltRingIdx[MAX_INSTALLED_CELLS];
@@ -304,25 +319,56 @@ uint8_t get485Address()
   uint8_t address = address1 << 1 | address2;
   return address;
 }
-void readImpedanceNvoltageFromAD5940(int batNo){
-    changeAD5940ToMeasurement(true);
-    Mcp23s08_setOutput(mcpBatteryMuxPattern(batNo));
-    delay(2000); //14.6152 14.589  //
+void readImpedanceNvoltageFromAD5940(int batNo)
+{
+  if (batNo < 1 || batNo > (int)systemDefaultValue.installed_cells)
+  {
+    ESP_LOGW(TAG, "readImpedanceNvoltage: invalid batNo %d", batNo);
+    return;
+  }
+  const unsigned idx = (unsigned)(batNo - 1);
 
-    ESP_LOGI(TAG, "scanBatteriesAds1220");
-    Ads1220_startSync();
-    (void)Ads1220_waitDrdy(ADS1220_DR_TIMEOUT_MS);
-    const int32_t vSample = Ads1220_readRaw();
-    float fVoltage1 = Ads1220_rawToVolts(vSample, 2.048, 1, 1.0); 
-    float fVoltage2 = Ads1220_rawToVoltsWithOffset(vSample, 1, 7.506);
-    ESP_LOGI(TAG, "fVoltage: %d, %.4f, %.4f", vSample, fVoltage1, fVoltage2);
+  changeAD5940ToMeasurement(true);
+  Mcp23s08_setOutput(mcpBatteryMuxPattern((unsigned)batNo));
+  delay(MUX_IMPEDANCE_SETTLE_MS);
 
-    /*For Test*/
-    changeAD5940ToMeasurement(false);
-    //AD5940_calibration(&real,&image);
-    float ImpMagnitude = AD5940_readImpMagnitude();
-    ESP_LOGI(TAG, "ImpMagnitude: %.4f", ImpMagnitude);
-    
+  const float vSample = Ads1220_readAveragedVoltageOnChannel(
+      0, ADS1220_SAMPLES_PER_CELL, ADS1220_DR_TIMEOUT_MS, ADS1220_INTER_SAMPLE_US);
+
+  changeAD5940ToMeasurement(false);
+
+  float impSum = 0.0f;
+  uint8_t impCount = 0;
+  for (uint8_t s = 0; s < (uint8_t)CELL_IMP_SAMPLES_PER_VISIT; s++)
+  {
+    const float z = AD5940_readImpMagnitude();
+    if (z > 0.0f)
+    {
+      impSum += z;
+      impCount++;
+    }
+    if (s + 1u < (uint8_t)CELL_IMP_SAMPLES_PER_VISIT)
+      delay(50);
+  }
+  float zSample = (impCount > 0) ? (impSum / (float)impCount) : 0.0f;
+  if (vSample < CELL_VOLTAGE_IMP_VALID_MIN_V)
+    zSample = 0.0f;
+
+  cellvalue[idx].voltage = cellRingPush(
+      s_cellVoltRing[idx], &s_cellVoltRingIdx[idx], &s_cellVoltRingCount[idx], &s_cellVoltRingSum[idx], vSample);
+  cellvalue[idx].impendance = cellRingPush(
+      s_cellImpRing[idx], &s_cellImpRingIdx[idx], &s_cellImpRingCount[idx], &s_cellImpRingSum[idx], zSample);
+
+  struct timeval tmv;
+  gettimeofday(&tmv, NULL);
+  cellvalue[idx].readTime = tmv.tv_sec;
+  cellvalue[idx].voltageCompensation = systemDefaultValue.voltageCompensation[idx];
+  cellvalue[idx].impendanceCompensation = systemDefaultValue.impendanceCompensation[idx];
+  cellvalue[idx].baseVoltage = systemDefaultValue.baseVoltage[idx];
+  cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
+
+  ESP_LOGI(TAG, "cell %u: V=%.4f V Z=%.3f mOhm (raw Z=%.3f)", (unsigned)(idx + 1),
+           cellvalue[idx].voltage, cellvalue[idx].impendance, zSample);
 }
 void setup()
 {
@@ -396,6 +442,8 @@ void setup()
   xTaskCreate(NetworkTask, "NetworkTask", 5000, NULL, 1, h_pxNetworkTask); // PCB 패턴문제로 사용하지 않는다.
 #endif
 
+  setupModbusAgentForexternal485();
+
   xTaskCreate(blueToothTask, "blueToothTask", 5000, NULL, 1, h_pxblueToothTask);
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
   // esp_log_level_t level;
@@ -460,7 +508,7 @@ void loop(void)
   if ((now - previousSecondmills > everySecondInterval))
   {
     toggle = toggle == 0 ? 1:0;
-    simpleCli.outputStream->printf("\nTime elasped : %ld ms\n",now/1000);
+    simpleCli.outputStream->printf("\nTime elapsed : %ld s\n", now / 1000);
     readImpedanceNvoltageFromAD5940(currentBatNo);
     currentBatNo++;
     if(currentBatNo>systemDefaultValue.installed_cells) currentBatNo=1;
