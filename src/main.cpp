@@ -25,6 +25,7 @@
 #include <Ads1220.h>
 #include "ntcTemperature.h"
 #include "ctCurrent.h"
+#include "restApi.h"
 
 // #include <esp_int_wdt.h>
 // #include <esp_task.h>
@@ -112,6 +113,27 @@ void AD5940_Main(void *parameters);
 
 void wifiApmodeConfig()
 {
+#ifdef WIFI_AP_MODE
+  static const char *const kApPassword = "87654321";
+  static const IPAddress kApIp(192, 168, 11, 1);
+  static const IPAddress kApGw(0, 0, 0, 0);
+  static const IPAddress kApMask(255, 255, 255, 0);
+
+  WiFi.mode(WIFI_MODE_AP);
+  if (!WiFi.softAPConfig(kApIp, kApGw, kApMask)) {
+    ESP_LOGW(TAG, "WiFi.softAPConfig failed");
+  }
+
+  String apSsid = "POSCOIMP_";
+  apSsid += get485Address();//WiFi.macAddress();
+  if (WiFi.softAP(apSsid.c_str(), kApPassword)) {
+    ESP_LOGI(TAG, "WiFi AP started: SSID=%s  IP=%s",
+             apSsid.c_str(), WiFi.softAPIP().toString().c_str());
+  } else {
+    ESP_LOGE(TAG, "WiFi.softAP failed: SSID=%s", apSsid.c_str());
+  }
+  restApiInit();
+#endif
 }
 void readnWriteEEProm()
 {
@@ -168,8 +190,9 @@ void readnWriteEEProm()
 void setupModbusAgentForexternal485(){
   //address는 항상 1이다.
   uint8_t address_485 = get485Address();
-
+  ESP_LOGI(TAG, "Address_485: %d", address_485);
   //external485.useStopControll =0;
+  Serial1.begin(9600, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);
   external485.begin(Serial1,9600,1,2000);
   external485.registerWorker(address_485,READ_COIL,&FC01);
   external485.registerWorker(address_485,READ_HOLD_REGISTER,&FC03);
@@ -404,7 +427,7 @@ static bool impSampleUsable(const fImpCar_Type *car)
   return (car->Real > 0.0f) && (mag >= IMP_MAG_MIN_VALID_MOHM);
 }
 
-/** EEPROM baseImpendance[] 인코딩: mOhm × 100 (Modbus FC04 80~99와 동일). */
+/** EEPROM baseImpendance[] 인코딩: mOhm × 100 (Modbus FC04 80~95). */
 static int16_t impMohmToEepromCenti(float z_mOhm)
 {
   if (z_mOhm <= 0.0f)
@@ -656,6 +679,71 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   return false;
 }
 
+/** Modbus FC06 주소 50 — 기준 저항: 5% 조건 없이 EEPROM 저장. */
+static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
+{
+  const unsigned idx = (unsigned)(batNo - 1);
+  const int16_t newC = impMohmToEepromCenti(z_mOhm);
+  if (newC <= 0)
+    return;
+  systemDefaultValue.baseImpendance[idx] = newC;
+  eepromNvsWriteBlock(&systemDefaultValue);
+  EEPROM.commit();
+  cellvalue[idx].baseImpendance = newC;
+  ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, z_mOhm);
+}
+
+static bool s_baselineScanRunCell = false;
+
+void modbusOnFc06Reg50Write(uint16_t value)
+{
+  if (value == 0)
+  {
+    modbusReg50BaseImpProgress = 0;
+    s_baselineScanRunCell = false;
+    return;
+  }
+  if (value == 1 && modbusReg50BaseImpProgress == 0)
+  {
+    modbusReg50BaseImpProgress = 1;
+    s_baselineScanRunCell = true;
+    ESP_LOGI(TAG, "Modbus baseline Z scan start");
+  }
+}
+
+void modbusBaselineScanPoll(void)
+{
+  if (!s_baselineScanRunCell || modbusReg50BaseImpProgress == 0)
+    return;
+
+  const uint16_t n = measureActiveCellCount();
+  const int bat = (int)modbusReg50BaseImpProgress;
+  if (bat < 1 || bat > (int)n)
+  {
+    modbusReg50BaseImpProgress = 0;
+    s_baselineScanRunCell = false;
+    return;
+  }
+
+  s_baselineScanRunCell = false;
+  readCellVoltageForBat(bat);
+  float z = 0.0f;
+  if (cellVoltageAllowsImpedanceV(cellvalue[(unsigned)(bat - 1)].voltage))
+    readCellImpedanceWithWarmup(bat, &z);
+  if (z > 0.0f)
+    forcePersistCellImpedanceToEeprom((unsigned)bat, z);
+
+  if ((unsigned)bat >= n)
+  {
+    modbusReg50BaseImpProgress = 0;
+    ESP_LOGI(TAG, "Modbus baseline Z scan complete (%u cells)", (unsigned)n);
+    return;
+  }
+
+  modbusReg50BaseImpProgress = (uint16_t)(bat + 1);
+  s_baselineScanRunCell = true;
+}
+
 static unsigned long now;
 static unsigned long previousVoltageMs = 0;
 static unsigned long lastImpedancePeriodMs = 0;
@@ -796,6 +884,22 @@ void loop(void)
   now = millis();
   esp_task_wdt_reset();
 
+  if (modbusBaselineScanIsActive())
+  {
+    modbusBaselineScanPoll();
+    if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
+    {
+      lastNtcReadMs = now;
+      ntcTemperatureUpdate();
+      ctCurrentUpdate();
+    }
+#ifdef WIFI_AP_MODE
+    restApiHandle();
+#endif
+    vTaskDelay(100);
+    return;
+  }
+
 #if MEASURE_TEST_COMBINED_VZ
   if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
   {
@@ -874,6 +978,10 @@ void loop(void)
              ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
              ctCurrentGetAmps(), packCurrentAin2Volts);
   }
+
+#ifdef WIFI_AP_MODE
+  restApiHandle();
+#endif
 
   vTaskDelay(100);
 }

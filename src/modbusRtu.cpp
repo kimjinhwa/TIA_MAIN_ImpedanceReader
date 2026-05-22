@@ -1,17 +1,318 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <Ads1220.h>
 #include "modbusRtu.h"
 #include "mainGrobal.h"
 #include "eepromNvs.hpp"
-#include <RtcDS1302.h>
+#include "../Version.h"
 #include <ModbusClientRTU.h>
 
 char strErrorMessage[40];
 
-/**
- * 하위 셀 모듈(Modbus 클라이언트) 동기 요청.
- * 별도 RTU 클라이언트·브리지가 없으면 스텁 응답(빌드·FC01 안전).
- */
+uint16_t modbusReg50BaseImpProgress = 0;
+
+/** Modbus주소.md — FC04 최대 셀 수 */
+#define MODBUS_MAX_CELLS 16u
+#define MODBUS_REG_BASE_IMP_PROGRESS 50u
+
+/** FC03/FC06 보정·설정 (EEPROM nvsSystemSet에 없는 항목은 RAM, 재부팅 시 기본값). */
+static struct
+{
+  uint16_t refVoltMv;
+  uint16_t cellGain;
+  int16_t cellOffset;
+  uint16_t useHoleCt;
+  int16_t tempOffset;
+  int16_t ampereOffset;
+  uint16_t ampereGain;
+  int16_t totalVoltageOffset;
+  uint16_t totalVoltageGain;
+} s_modbusCalib = {
+    2048u,
+    1000u,
+    0,
+    1000u,
+    0,
+    0,
+    1000u,
+    0,
+    1000u,
+};
+
+static void modbusSyncCtGainFromReg(void)
+{
+  Ads1220CtScale scale;
+  Ads1220_getCtScale(&scale);
+  scale.gain = (float)s_modbusCalib.useHoleCt / 1000.0f;
+  if (scale.gain <= 0.0f)
+    scale.gain = 1.0f;
+  Ads1220_setCtScale(&scale);
+}
+
+static void modbusParseFirmwareVersion(uint16_t *major, uint16_t *minor, uint16_t *patch)
+{
+  int ma = 0;
+  int mi = 0;
+  int pa = 0;
+  sscanf(VERSION, "%d.%d.%d", &ma, &mi, &pa);
+  if (major)
+    *major = (uint16_t)ma;
+  if (minor)
+    *minor = (uint16_t)mi;
+  if (patch)
+    *patch = (uint16_t)pa;
+}
+
+static uint16_t modbusInstalledCells(void)
+{
+  uint16_t n = systemDefaultValue.installed_cells;
+  if (n < 1)
+    n = 1;
+  if (n > MODBUS_MAX_CELLS)
+    n = MODBUS_MAX_CELLS;
+  return n;
+}
+
+static uint16_t impMohmToModbusReg(float z_mOhm)
+{
+  if (z_mOhm <= 0.0f)
+    return 0;
+  const float v = z_mOhm * 100.0f + 0.5f;
+  if (v > 65535.0f)
+    return 65535u;
+  return (uint16_t)v;
+}
+
+static uint16_t impCentiToModbusReg(int16_t centi)
+{
+  if (centi <= 0)
+    return 0;
+  return (uint16_t)min((int)centi, 65535);
+}
+
+static uint16_t modbusOpenWireStatus(void)
+{
+  uint16_t mask = 0;
+  const uint16_t n = modbusInstalledCells();
+  for (uint16_t i = 0; i < n; i++)
+  {
+    if (cellvalue[i].voltage < 0.6f)
+      mask |= (uint16_t)(1u << i);
+  }
+  return mask;
+}
+
+static int32_t modbusScaleS16(int32_t raw, int16_t offset, uint16_t gain)
+{
+  if (gain == 0)
+    gain = 1000;
+  return (raw + (int32_t)offset) * (int32_t)gain / 1000;
+}
+
+static uint16_t modbusPackTotalVoltageMv(void)
+{
+  uint32_t sum = 0;
+  const uint16_t n = modbusInstalledCells();
+  for (uint16_t i = 0; i < n; i++)
+  {
+    const float v = cellvalue[i].voltage;
+    if (v > 0.0f)
+      sum += (uint32_t)(v * 1000.0f + 0.5f);
+  }
+  int32_t scaled = modbusScaleS16((int32_t)sum, s_modbusCalib.totalVoltageOffset, s_modbusCalib.totalVoltageGain);
+  if (scaled < 0)
+    scaled = 0;
+  if (scaled > 65535)
+    return 65535u;
+  return (uint16_t)scaled;
+}
+
+static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
+{
+  if (count < 51)
+    return;
+
+  uint16_t maj = 0;
+  uint16_t min = 0;
+  uint16_t pat = 0;
+  modbusParseFirmwareVersion(&maj, &min, &pat);
+
+  reg[0] = (uint16_t)systemDefaultValue.modbusId;
+  reg[1] = modbusInstalledCells();
+  reg[2] = s_modbusCalib.refVoltMv;
+  reg[3] = s_modbusCalib.cellGain;
+  reg[4] = (uint16_t)(int16_t)s_modbusCalib.cellOffset;
+  reg[5] = maj;
+  reg[6] = min;
+  reg[7] = pat;
+  reg[8] = modbusOpenWireStatus();
+  reg[9] = s_modbusCalib.useHoleCt;
+  reg[10] = (uint16_t)(int16_t)s_modbusCalib.tempOffset;
+  reg[11] = (uint16_t)(int16_t)s_modbusCalib.ampereOffset;
+  reg[12] = s_modbusCalib.ampereGain;
+  reg[13] = (uint16_t)(int16_t)s_modbusCalib.totalVoltageOffset;
+  reg[14] = s_modbusCalib.totalVoltageGain;
+  reg[MODBUS_REG_BASE_IMP_PROGRESS] = modbusReg50BaseImpProgress;
+}
+
+static void modbusFillFc04Input(uint16_t *reg, unsigned count)
+{
+  if (count < 96)
+    return;
+
+  const uint16_t n = modbusInstalledCells();
+
+  for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
+  {
+    if (i < n)
+    {
+      int32_t mv = (int32_t)(cellvalue[i].voltage * 1000.0f + 0.5f);
+      mv = modbusScaleS16(mv, s_modbusCalib.cellOffset, s_modbusCalib.cellGain);
+      if (mv < 0)
+        mv = 0;
+      if (mv > 65535)
+        mv = 65535;
+      reg[i] = (uint16_t)mv;
+    }
+    else
+    {
+      reg[i] = 0;
+    }
+  }
+
+  for (int t = 0; t < 2; t++)
+  {
+    int32_t tx10 = modbusScaleS16(ntcTemperatureC_x10[t], s_modbusCalib.tempOffset, 1000);
+    if (tx10 < -32768)
+      tx10 = -32768;
+    if (tx10 > 32767)
+      tx10 = 32767;
+    reg[16 + t] = (uint16_t)(int16_t)tx10;
+  }
+
+  {
+    int32_t ax10 = modbusScaleS16(packCurrentA_x10, s_modbusCalib.ampereOffset, s_modbusCalib.ampereGain);
+    if (ax10 < -32768)
+      ax10 = -32768;
+    if (ax10 > 32767)
+      ax10 = 32767;
+    reg[18] = (uint16_t)(int16_t)ax10;
+  }
+
+  reg[19] = modbusPackTotalVoltageMv();
+
+  for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
+  {
+    if (i < n)
+      reg[60 + i] = impMohmToModbusReg(cellvalue[i].impendance);
+    else
+      reg[60 + i] = 0;
+  }
+
+  for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
+  {
+    if (i < n)
+      reg[80 + i] = impCentiToModbusReg(systemDefaultValue.baseImpendance[i]);
+    else
+      reg[80 + i] = 0;
+  }
+}
+
+static bool modbusAddressRangeOk(uint16_t address, uint16_t words, uint16_t maxAddr)
+{
+  if (words == 0)
+    return false;
+  return ((uint32_t)address + (uint32_t)words) <= ((uint32_t)maxAddr + 1u);
+}
+
+static ModbusMessage modbusReadRegisters(ModbusMessage request, uint8_t fc, uint16_t maxAddr,
+                                       void (*fill)(uint16_t *, unsigned))
+{
+  uint16_t address = 0;
+  uint16_t words = 0;
+  request.get(2, address);
+  request.get(4, words);
+
+  ModbusMessage response;
+  if (!modbusAddressRangeOk(address, words, maxAddr))
+  {
+    response.setError(request.getServerID(), fc, ILLEGAL_DATA_ADDRESS);
+    return response;
+  }
+
+  uint16_t buf[256];
+  memset(buf, 0, sizeof(buf));
+  if (fc == READ_HOLD_REGISTER)
+    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+  fill(buf, 256);
+
+  response.add(request.getServerID(), fc, (uint8_t)(words * 2));
+  for (uint16_t i = 0; i < words; i++)
+    response.add(buf[address + i]);
+  return response;
+}
+
+static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
+{
+  if (needReboot)
+    *needReboot = false;
+
+  switch (addr)
+  {
+  case 0:
+    if (value < 1 || value > 247)
+      return false;
+    systemDefaultValue.modbusId = (uint8_t)value;
+    if (needReboot)
+      *needReboot = true;
+    return true;
+  case 1:
+    if (value < 1 || value > MODBUS_MAX_CELLS)
+      return false;
+    systemDefaultValue.installed_cells = value;
+    return true;
+  case 2:
+    s_modbusCalib.refVoltMv = value;
+    return true;
+  case 3:
+    s_modbusCalib.cellGain = value;
+    return true;
+  case 4:
+    s_modbusCalib.cellOffset = (int16_t)value;
+    return true;
+  case 9:
+    if (value == 0)
+      value = 1000;
+    s_modbusCalib.useHoleCt = value;
+    modbusSyncCtGainFromReg();
+    return true;
+  case 10:
+    s_modbusCalib.tempOffset = (int16_t)value;
+    return true;
+  case 11:
+    s_modbusCalib.ampereOffset = (int16_t)value;
+    return true;
+  case 12:
+    if (value == 0)
+      value = 1000;
+    s_modbusCalib.ampereGain = value;
+    return true;
+  case 13:
+    s_modbusCalib.totalVoltageOffset = (int16_t)value;
+    return true;
+  case 14:
+    if (value == 0)
+      value = 1000;
+    s_modbusCalib.totalVoltageGain = value;
+    return true;
+  case MODBUS_REG_BASE_IMP_PROGRESS:
+    modbusOnFc06Reg50Write(value);
+    return (value == 0 || value == 1);
+  default:
+    return false;
+  }
+}
+
 ModbusMessage syncRequestCellModule(uint32_t token, uint8_t modbusId, uint8_t fCode,
                                     uint16_t startAddress, uint16_t len)
 {
@@ -43,203 +344,54 @@ ModbusMessage syncRequestCellModule(uint32_t token, uint8_t modbusId, uint8_t fC
   }
   return rsp;
 }
-void setErrorMessageToModbus(bool setError,const char* msg)
+
+void setErrorMessageToModbus(bool setError, const char *msg)
 {
-  memset(strErrorMessage,0x00,sizeof(strErrorMessage));
-  if(setError){
-    strErrorMessage[0]=0;
-    strErrorMessage[1]=setError;
+  memset(strErrorMessage, 0x00, sizeof(strErrorMessage));
+  if (setError)
+  {
+    strErrorMessage[0] = 0;
+    strErrorMessage[1] = setError;
     strncpy(strErrorMessage + 2, msg, sizeof(strErrorMessage) - 3);
-    strErrorMessage[strlen(msg)+2] = '\0';
-    //ESP_LOGI("MODBUS","--->StrLen is %d",strlen(msg));
     strErrorMessage[sizeof(strErrorMessage) - 1] = '\0';
   }
-  else 
+  else
   {
-    strErrorMessage[0]=0;
-    strErrorMessage[1]=0;
+    strErrorMessage[0] = 0;
+    strErrorMessage[1] = 0;
   }
-};
-void setSendbuffer(uint8_t fCode,uint16_t *sendValue){
-  struct timeval tmv;
-  gettimeofday(&tmv, NULL);
-  RtcDateTime now;
-  now = RtcDateTime(tmv.tv_sec);
-  if(fCode== 4){
-    for(int i=0;i<20;i++){
-      sendValue[i] = (uint16_t)(cellvalue[i].voltage *100);
-    }
-    sendValue[16] = (uint16_t)ntcTemperatureC_x10[0];
-    sendValue[17] = (uint16_t)ntcTemperatureC_x10[1];
-    sendValue[18] = (uint16_t)packCurrentA_x10;
-    for(int i=40;i<60;i++){
-      sendValue[i] = cellvalue[i-40].temperature ;
-      //*(sendValue+i) = (uint16_t)();
-    }
-    for(int i=80;i<100;i++){
-      sendValue[i] = (uint16_t)(cellvalue[i-80].impendance*100);
-    }
-    //에러가 있다면 여기에 값을 적어 넣는다. 최대 30글자이다.
-  }
-  if(fCode== 3)
-  {
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-  }
-  sendValue[120]=now.Year();
-  sendValue[121]=now.Month();
-  sendValue[122]=now.Day();
-  sendValue[123]=now.Hour();
-  sendValue[124]=now.Minute();
-  sendValue[125]=now.Second();
-  // ESP_LOGE("TIME","%d-%d-%d %d:%d:%d", 
-  //   now.Year(),now.Month(),now.Day(),now.Hour(),now.Minute(),now.Second());
-  sendValue[126]= systemDefaultValue.modbusId ;
-  sendValue[127]= systemDefaultValue.installed_cells;
-  sendValue[128]= systemDefaultValue.AlarmTemperature;
-  sendValue[129]= systemDefaultValue.alarmHighCellVoltage ;
-  sendValue[130]=systemDefaultValue.alarmLowCellVoltage;
-  sendValue[131]= systemDefaultValue.AlarmAmpere ;  // 200A
-  for(int  i=132;i<160;i++) sendValue[i] =0x00;
-
-  //setErrorMessageToModbus(true,"Hello....\n");
-  char *dest ;
-  dest = (char*)(sendValue+141); //strncpy(dest ,strErrorMessage,sizeof(strErrorMessage)-2);
-  for(int i=0; i< 38;i++){
-    dest[i] = strErrorMessage[i+2]; // Serial.printf("%02x ",dest[i]);
-  }
-  //sendValue[140]= ((int)strErrorMessage[0] << 8) & ((int)strErrorMessage[1] & 0x00ff) ;
-  if(strErrorMessage[0] != 0 || strErrorMessage[1] != 0) sendValue[140]=1;
-  // ESP_LOGI("TEST","\n-------> send Message Value %s %d %d %d",
-  //   dest,sendValue[140],strErrorMessage[0],strErrorMessage[1] );
 }
 
-ModbusMessage FC03(ModbusMessage request) 
+bool modbusBaselineScanIsActive(void)
 {
-  uint16_t address;           // requested register address
-  uint16_t writeAddress;           // requested register address
-  uint16_t words;             // requested number of registers
-  ModbusMessage response;     // response message to be sent back
-  uint16_t value;
-  uint16_t sendValue[256];
+  return modbusReg50BaseImpProgress != 0;
+}
 
-  struct timeval tmv;
-  gettimeofday(&tmv, NULL);
-  RtcDateTime now;
-  now = RtcDateTime(tmv.tv_sec);
-  memset(sendValue,0x00,256);
-  setSendbuffer(03,sendValue);
-  // get request values
-  request.get(2, address);
-  request.get(4, words);
+ModbusMessage FC03(ModbusMessage request)
+{
+  return modbusReadRegisters(request, READ_HOLD_REGISTER, MODBUS_REG_BASE_IMP_PROGRESS,
+                             modbusFillFc03Holding);
+}
 
-  if(  words ==0  ||  ((address & 0x00FF) + words) > 255){
-    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
-    return response;
-  } 
-  response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
-
-  if ((address + words) < 0x100)
-  {
-    for (int i = address; i < words + address; i++)
-    {
-        value = sendValue[i];
-        response.add(value);
-    }
-  }
-  
-  return response;
-};
-ModbusMessage FC04(ModbusMessage request) {
-  uint16_t address;           // requested register address
-  uint16_t writeAddress;           // requested register address
-  uint16_t words;             // requested number of registers
-  ModbusMessage response;     // response message to be sent back
-  uint16_t value;
-  uint16_t sendValue[256];
-  int i;
-  memset(sendValue,0x00,256);
-  setSendbuffer(04,sendValue);
-  // get request values
-  request.get(2, address);
-  request.get(4, words);
-  writeAddress = address & 0x00FF;
-
-  if(  words ==0  ||  ((address & 0x00FF) + words) > 255){
-    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
-    return response;
-  } 
-  response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
-
-  if ((address + words) < 0x100)// 256보다 작으면...
-  {
-    //Serial.printf("\nFunction code 04 %d[%d] %d ",address,writeAddress,words);
-      for (i = address; i < words + address; i++)
-      {
-        value = sendValue[i];
-        response.add(value);
-        //Serial.printf(" %d",value);
-      }
-  }
-  else if((address >= 0x100) && address+words < (0x100 + MAX_INSTALLED_CELLS)){
-    for (i = writeAddress ; i< words+writeAddress ; i++)
-    {
-        value = sendValue[i+40];
-        response.add(value);
-    }
-  }
-  else if((address >= 0x200) && address+words < (0x200 + MAX_INSTALLED_CELLS)){
-    writeAddress = address & 0x00FF;
-    for (i = writeAddress; i< words+writeAddress ; i++)
-    {
-        value = sendValue[i+80];
-        response.add(value);
-    }
-  }
-  else if((address >= 0x300) && address+words < (0x300 + MAX_INSTALLED_CELLS)){
-    writeAddress = address & 0x00FF;
-    for (i = writeAddress ;i <  words+writeAddress; i++)
-    {
-      value = sendValue[i];
-      response.add(value);
-    }
-  }
-  else if((address >= 0x400) && address+words < (0x400 + 255)){
-    writeAddress = address & 0x00FF;
-    //Serial.printf("\nFunction code 03 %d[%d] %d ",address,writeAddress,words);
-    for (i = writeAddress; i < writeAddress+words; i++)
-    {
-      value = sendValue[i+120];
-      response.add(value);
-    }
-  }
-  else if((address >= 0x700) && address <= 0x7FF){
-    writeAddress = address & 0x00FF;
-    for (i = writeAddress; i < words; i++)
-    {
-      uint8_t _modBusID = EEPROM.readByte(1);
-      value = _modBusID;
-      response.add(value);
-    }
-  }
-  return response;
-};
+ModbusMessage FC04(ModbusMessage request)
+{
+  return modbusReadRegisters(request, READ_INPUT_REGISTER, 95u, modbusFillFc04Input);
+}
 
 ModbusMessage FC01(ModbusMessage request)
 {
-  uint16_t address;       // requested register address
-  ModbusMessage response; // response message to be sent back
+  uint16_t address;
+  ModbusMessage response;
   uint16_t quantity;
-  // get request quantitys
   request.get(2, address);
   request.get(4, quantity);
   uint16_t writeAddress = (0xFFFF & address);
 
   response.add(request.getServerID(), request.getFunctionCode());
-  ESP_LOGI("MODBUS", "\nFunction code %d address(%d) writeAddress(%d) quantity(%d) ",
-    response.getFunctionCode(), address, writeAddress, quantity);
+  ESP_LOGI("MODBUS", "FC01 address(%u) quantity(%u)", writeAddress, quantity);
 
   if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
-  { // Cell제어
+  {
     uint8_t moduleAddress = address >> 8;
     moduleAddress -= 16;
     writeAddress &= 0x00FF;
@@ -248,162 +400,86 @@ ModbusMessage FC01(ModbusMessage request)
     ModbusMessage rc = syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress, quantity);
 
     std::vector<uint8_t> MM_data(rc.data(), rc.data() + rc.size());
-    for (uint8_t byte : MM_data)
-    {
-      ESP_LOGI("MODSERVER", "%d", byte);
-    }
-    uint8_t relay =static_cast<uint8_t >(MM_data[3]);
+    uint8_t relay = static_cast<uint8_t>(MM_data.size() > 3 ? MM_data[3] : 0);
     response.add((uint8_t)1);
     response.add(relay);
-    ESP_LOGI("REQ", "server id (%d) func %d ", request.getServerID(), request.getFunctionCode());
-    ESP_LOGI("REQ", "server id (%d) func %d error %d", rc.getServerID(), rc.getFunctionCode(), rc.getError());
   }
   return response;
-};
+}
+
 ModbusMessage FC05(ModbusMessage request)
 {
-  uint16_t address;       // requested register address
-  ModbusMessage response; // response message to be sent back
+  uint16_t address;
+  ModbusMessage response;
   uint16_t value;
-  
+
   request.get(2, address);
   request.get(4, value);
   uint16_t writeAddress = (0xFFFF & address);
-
-  struct timeval tmv;
-  gettimeofday(&tmv, NULL);
-  RtcDateTime now;
-  now = RtcDateTime(tmv.tv_sec);
 
   response.add(request.getServerID(), request.getFunctionCode(), writeAddress);
   response.add(value);
 
-  ESP_LOGI("MODBUS", "\nFunction code %d address(%d) writeAddress(%d) value(%d) ",
-    response.getFunctionCode(), address, writeAddress, value);
-
-  if(writeAddress >= 0x1101 && writeAddress <= 0x2501  ){  // Cell제어 
+  if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
+  {
     uint8_t moduleAddress = address >> 8;
-    moduleAddress  -= 16;
+    moduleAddress -= 16;
     writeAddress &= 0x00FF;
-    writeAddress = writeAddress -1;
-    uint32_t token=millis();
-    ModbusMessage rc =  syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress,  value);
-    ESP_LOGI("REQ","server id (%d) func %d ",request.getServerID(),request.getFunctionCode());
-    ESP_LOGI("REQ","server id (%d) func %d error %d",rc.getServerID(),rc.getFunctionCode(),rc.getError());
+    writeAddress = writeAddress - 1;
+    uint32_t token = millis();
+    syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress, value);
   }
   return response;
-};
+}
+
 ModbusMessage FC06(ModbusMessage request)
 {
-  uint16_t address;       // requested register address
-  ModbusMessage response; // response message to be sent back
+  uint16_t address;
+  ModbusMessage response;
   uint16_t value;
-  // get request values
   request.get(2, address);
   request.get(4, value);
-  uint16_t writeAddress = (0xFFFF & address);
+  const uint16_t writeAddress = (0xFFFF & address);
 
-  struct timeval tmv;
-  gettimeofday(&tmv, NULL);
-  RtcDateTime now;
-  now = RtcDateTime(tmv.tv_sec);
-
-  // if (writeAddress > 255)
-  // {
-  //   response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
-  //   return response;
-  // }
-  response.add(request.getServerID(), request.getFunctionCode(), writeAddress) ;
+  response.add(request.getServerID(), request.getFunctionCode(), writeAddress);
   response.add(value);
 
-  ESP_LOGI("MODBUS", "\nFunction code %d address(%d) writeAddress(%d) value(%d) ",
-    response.getFunctionCode(), address, writeAddress, value);
-  ESP_LOGI("MODBUS", "Write and read %d ", systemDefaultValue.voltageCompensation[writeAddress]);
-  if (writeAddress < 40)  // voltage compensation
-  {
-    systemDefaultValue.voltageCompensation[writeAddress] = value;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-  }
-  if (writeAddress >= 40 && writeAddress < 60) // temperature
-  {
-  }
-  if (writeAddress >= 80 && writeAddress < 100)  //impedance compensation
-  {
-    systemDefaultValue.impendanceCompensation[writeAddress - 80] = value;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-  }
-  if (writeAddress >= 120 && writeAddress < 126)
-  { // 시간을 설정한다.
-    switch (writeAddress)
-    {
-    case 120:
-      now = RtcDateTime(value, now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second());
-      break;
-    case 121:
-      now = RtcDateTime(now.Year(), value, now.Day(), now.Hour(), now.Minute(), now.Second());
-      break;
-    case 122:
-      now = RtcDateTime(now.Year(), now.Month(), value, now.Hour(), now.Minute(), now.Second());
-      break;
-    case 123:
-      now = RtcDateTime(now.Year(), now.Month(), now.Day(), value, now.Minute(), now.Second());
-      break;
-    case 124:
-      now = RtcDateTime(now.Year(), now.Month(), now.Day(), now.Hour(), value, now.Second());
-      break;
-    case 125:
-      now = RtcDateTime(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), value);
-      break;
+  ESP_LOGI("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
 
-    default:
-      break;
+  if (writeAddress <= 14 || writeAddress == MODBUS_REG_BASE_IMP_PROGRESS)
+  {
+    if (writeAddress >= 5 && writeAddress <= 8)
+    {
+      response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+      return response;
     }
-  }
-  if (writeAddress >= 126 && writeAddress < 132)
-  {
-
-    switch (writeAddress)
+    bool needReboot = false;
+    if (!modbusWriteHolding(writeAddress, value, &needReboot))
     {
-    case 126:
-      systemDefaultValue.modbusId = value;
-      break;
-    case 127:
-      systemDefaultValue.installed_cells= value;
-      break;
-    case 128:
-      systemDefaultValue.AlarmTemperature = value;
-      break;
-    case 129:
-      systemDefaultValue.alarmHighCellVoltage = value;
-      break;
-    case 130:
-      systemDefaultValue.alarmLowCellVoltage = value;
-      break;
-    case 131:
-      systemDefaultValue.AlarmAmpere = value;
-      break;
-    default:
-      break;
-    };
-    ESP_LOGI("MODUBS", "Write EEPROM");
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+      response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+      return response;
+    }
+    if (writeAddress == 0 || writeAddress == 1 || (writeAddress >= 9 && writeAddress <= 14))
+    {
+      eepromNvsWriteBlock(&systemDefaultValue);
+      EEPROM.commit();
+      EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    }
+    if (needReboot)
+      ESP.restart();
+    return response;
   }
 
-  if(writeAddress >= 0x1101 && writeAddress <= 0x2501  ){  // Cell제어 
+  if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
+  {
     uint8_t moduleAddress = address >> 8;
-    moduleAddress  -= 16;
-    writeAddress &= 0x00FF;
-    writeAddress = writeAddress -1;
-    uint32_t token=millis();
-    ModbusMessage rc =  syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress,  value);
-    ESP_LOGI("REQ","server id (%d) func %d ",request.getServerID(),request.getFunctionCode());
-    ESP_LOGI("REQ","server id (%d) func %d error %d",rc.getServerID(),rc.getFunctionCode(),rc.getError());
+    moduleAddress -= 16;
+    uint16_t cellAddr = (writeAddress & 0x00FF) - 1;
+    syncRequestCellModule(millis(), moduleAddress, request.getFunctionCode(), cellAddr, value);
+  }
+  else
+  {
+    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
   }
   return response;
-};
+}
