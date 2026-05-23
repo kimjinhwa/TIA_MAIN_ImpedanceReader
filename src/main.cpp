@@ -58,9 +58,12 @@
 static const int spiClk = 1000000; // 1 MHz
 static char TAG[] ="Main";
 
-TaskHandle_t *h_pxblueToothTask;
-TaskHandle_t *h_pxNetworkTask;
-static TaskHandle_t s_webApiTaskHandle = nullptr;
+static TaskHandle_t h_networkTask = nullptr;
+static TaskHandle_t s_serviceTaskHandle = nullptr;
+/* legacy symbol: referenced by fileSystem.cpp (df command) */
+TaskHandle_t *h_pxblueToothTask = nullptr;
+static volatile bool s_apRestartRequested = false;
+static bool s_wifiEventHandlerRegistered = false;
 nvsSystemSet systemDefaultValue;
 
 ModbusServerRTU external485(2000,EXT_485EN_1);
@@ -124,12 +127,39 @@ void pinsetup()
 void AD5940_Main(void *parameters);
 
 #ifdef WIFI_AP_MODE
-static void webApiTask(void *parameters)
+static void serviceTask(void *parameters)
 {
   (void)parameters;
+  myBlueTooth blueTooth;
+  simpleCli.inputStream = &Serial;
+  uint32_t previousBtSwitchMs = 0;
+  const uint32_t btSwitchIntervalMs = 5000;
+
   for (;;)
   {
+#ifdef WIFI_AP_MODE
     restApiHandle();
+#endif
+    blueTooth.readInputSerialBT();
+
+    const uint32_t nowMs = millis();
+    if ((nowMs - previousBtSwitchMs) > btSwitchIntervalMs)
+    {
+      previousBtSwitchMs = nowMs;
+      if (SerialBT.connected())
+      {
+        lsFile.setOutputStream(&SerialBT);
+        simpleCli.inputStream = &SerialBT;
+        simpleCli.outputStream = &SerialBT;
+      }
+      else
+      {
+        lsFile.setOutputStream(&Serial);
+        simpleCli.outputStream = &Serial;
+        simpleCli.inputStream = &Serial;
+      }
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
@@ -142,7 +172,7 @@ static void printWebLoginCredentials(void)
   ESP_LOGI(TAG, "  User ID      : %s", systemDefaultValue.userid);
   ESP_LOGI(TAG, "  User password: %s", systemDefaultValue.userpassword);
 #ifdef WIFI_AP_MODE
-  ESP_LOGI(TAG, "  Web URL      : http://%s/login.html", WiFi.softAPIP().toString().c_str());
+  ESP_LOGI(TAG, "  Web URL(AP)  : http://%s/login.html", WiFi.softAPIP().toString().c_str());
 #endif
 
   Serial.println();
@@ -150,15 +180,14 @@ static void printWebLoginCredentials(void)
   Serial.printf("  User ID      : %s\r\n", systemDefaultValue.userid);
   Serial.printf("  User password: %s\r\n", systemDefaultValue.userpassword);
 #ifdef WIFI_AP_MODE
-  Serial.printf("  Web URL      : http://%s/login.html\r\n", WiFi.softAPIP().toString().c_str());
+  Serial.printf("  Web URL(AP)  : http://%s/login.html\r\n", WiFi.softAPIP().toString().c_str());
 #endif
   Serial.println("================================");
   Serial.println();
 }
 
-void wifiApmodeConfig()
+static bool startApOnly(void)
 {
-#ifdef WIFI_AP_MODE
   static const char *const kApPassword = "87654321";
   static const IPAddress kApIp(192, 168, 11, 1);
   static const IPAddress kApGw(0, 0, 0, 0);
@@ -170,13 +199,38 @@ void wifiApmodeConfig()
   }
 
   String apSsid = "POSCOIMP_";
-  apSsid += get485Address();//WiFi.macAddress();
-  if (WiFi.softAP(apSsid.c_str(), kApPassword)) {
+  apSsid += get485Address();
+  const bool ok = WiFi.softAP(apSsid.c_str(), kApPassword);
+  if (ok) {
     ESP_LOGI(TAG, "WiFi AP started: SSID=%s  IP=%s",
              apSsid.c_str(), WiFi.softAPIP().toString().c_str());
   } else {
     ESP_LOGE(TAG, "WiFi.softAP failed: SSID=%s", apSsid.c_str());
   }
+  return ok;
+}
+
+static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  (void)info;
+#ifdef WIFI_AP_MODE
+  if (event == ARDUINO_EVENT_WIFI_AP_STOP)
+  {
+    s_apRestartRequested = true;
+    ESP_LOGW(TAG, "WiFi event: AP_STOP detected, restart requested");
+  }
+#endif
+}
+
+void wifiApmodeConfig()
+{
+#ifdef WIFI_AP_MODE
+  if (!s_wifiEventHandlerRegistered)
+  {
+    WiFi.onEvent(onWifiEvent);
+    s_wifiEventHandlerRegistered = true;
+  }
+  startApOnly();
   restApiInit();
 #endif
 }
@@ -891,8 +945,10 @@ static unsigned long now;
 static unsigned long previousVoltageMs = 0;
 static unsigned long lastImpedancePeriodMs = 0;
 static unsigned long lastNtcReadMs = 0;
+static unsigned long lastWifiWatchMs = 0;
 /** IN_TH1/IN_TH2 NTC 갱신 주기 */
 static const unsigned long NTC_READ_INTERVAL_MS = 2000;
+static const unsigned long WIFI_WATCH_INTERVAL_MS = 5000;
 static bool s_impedanceSessionActive = false;
 static uint16_t s_impedanceSessionCell = 1;
 static uint16_t voltageRotateBatNo = 1;
@@ -930,10 +986,10 @@ void setup()
   wifiApmodeConfig();
   printWebLoginCredentials();
 #ifdef WIFI_AP_MODE
-  if (s_webApiTaskHandle == nullptr)
+  if (s_serviceTaskHandle == nullptr)
   {
-    xTaskCreatePinnedToCore(webApiTask, "WebApiTask", 4096, NULL, 1, &s_webApiTaskHandle, 0);
-    ESP_LOGI(TAG, "WebApiTask started (core0, prio1)");
+    xTaskCreatePinnedToCore(serviceTask, "ServiceTask", 6144, NULL, 1, &s_serviceTaskHandle, 0);
+    ESP_LOGI(TAG, "ServiceTask started (BT+WEB, core0, prio1)");
   }
 #endif
 
@@ -999,12 +1055,10 @@ void setup()
   esp_task_wdt_init(WDT_TIMEOUT, true);
   esp_task_wdt_add(NULL);
 #ifdef WEBOTA
-  xTaskCreate(NetworkTask, "NetworkTask", 5000, NULL, 1, h_pxNetworkTask); // PCB 패턴문제로 사용하지 않는다.
+  xTaskCreate(NetworkTask, "NetworkTask", 5000, NULL, 1, &h_networkTask); // PCB 패턴문제로 사용하지 않는다.
 #endif
 
   setupModbusAgentForexternal485();
-
-  xTaskCreate(blueToothTask, "blueToothTask", 5000, NULL, 1, h_pxblueToothTask);
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
   // esp_log_level_t level;
   // switch (systemDefaultValue.logLevel)
@@ -1047,7 +1101,7 @@ void loop(void)
       ctCurrentUpdate();
     }
 #ifdef WIFI_AP_MODE
-    if (s_webApiTaskHandle == nullptr)
+    if (s_serviceTaskHandle == nullptr)
       restApiHandle();
 #endif
     dataSyncPublishCellSnapshot(cellvalue, MAX_INSTALLED_CELLS);
@@ -1135,7 +1189,32 @@ void loop(void)
   }
 
 #ifdef WIFI_AP_MODE
-  if (s_webApiTaskHandle == nullptr)
+  if (s_apRestartRequested)
+  {
+    s_apRestartRequested = false;
+    ESP_LOGW(TAG, "WiFi AP restart by event");
+    WiFi.softAPdisconnect(true);
+    startApOnly();
+  }
+
+  if ((now - lastWifiWatchMs) >= WIFI_WATCH_INTERVAL_MS)
+  {
+    lastWifiWatchMs = now;
+    const IPAddress apIp = WiFi.softAPIP();
+    const bool apModeOk = (WiFi.getMode() == WIFI_MODE_AP) || (WiFi.getMode() == WIFI_MODE_APSTA);
+    const bool apIpOk = (apIp[0] == 192 && apIp[1] == 168 && apIp[2] == 11 && apIp[3] == 1);
+    if (!apModeOk || !apIpOk)
+    {
+      ESP_LOGW(TAG, "WiFi AP watchdog recover (mode=%d ip=%s)",
+               (int)WiFi.getMode(), apIp.toString().c_str());
+      WiFi.softAPdisconnect(true);
+      startApOnly();
+    }
+  }
+#endif
+
+#ifdef WIFI_AP_MODE
+  if (s_serviceTaskHandle == nullptr)
     restApiHandle();
 #endif
 

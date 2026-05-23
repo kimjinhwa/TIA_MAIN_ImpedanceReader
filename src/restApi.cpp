@@ -1,6 +1,5 @@
 #include "restApi.h"
 
-#define WIFI_AP_MODE 1
 #ifdef WIFI_AP_MODE
 
 #include <Arduino.h>
@@ -19,6 +18,7 @@
 #include "eepromNvs.hpp"
 #include "fileSystem.h"
 #include "mainGrobal.h"
+#include "modbusRtu.h"
 #include "webFileUploadHtml.h"
 #include "webJqueryMinJs.h"
 
@@ -29,6 +29,9 @@ static const char *const TAG = "RestApi";
 #define REST_API_HALF_SLOTS 15u
 
 static WebServer s_server(80);
+
+static bool apiRequireSession(void);
+static void jsonAppendEscaped(char *dst, size_t cap, size_t *off, const char *text);
 
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern nvsSystemSet systemDefaultValue;
@@ -437,13 +440,14 @@ static void handleApiNetworkConfigGet(void)
   strncpy(gwStr, ipUint32ToString(cfg.GATEWAY).c_str(), sizeof(gwStr) - 1);
 
   static char json[768];
+  const String macAddress = WiFi.macAddress();
   snprintf(json, sizeof(json),
            "{\"network\":{\"macAddress\":\"%s\",\"ipAddress\":\"%s\",\"subnetMask\":\"%s\",\"gateway\":\"%s\"},"
            "\"snmpAccess\":{\"ipAddress\":\"0.0.0.0\",\"community\":\"public\",\"permission\":\"NOACCESS\"},"
            "\"trapAccess\":{\"ipAddress\":\"0.0.0.0\",\"community\":\"public\",\"accept\":true},"
            "\"webAccess\":{\"webPort\":80,\"accessIp1\":\"0.0.0.0\",\"accessIp2\":\"0.0.0.0\","
            "\"id\":\"%s\",\"pw\":\"\"}}",
-           WiFi.softAPmacAddress().c_str(), ipStr, maskStr, gwStr, userEsc);
+           macAddress.c_str(), ipStr, maskStr, gwStr, userEsc);
   s_server.send(200, "application/json", json);
 }
 
@@ -680,6 +684,62 @@ static void handleApiSystemActionPost(void)
   }
 
   s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"unknown action\"}");
+}
+
+static void handleApiImpedanceBaselineStartPost(void)
+{
+  if (!apiRequireSession())
+    return;
+  sendCorsHeaders();
+
+  if (modbusReg50BaseImpProgress != 0)
+  {
+    static char busyJson[160];
+    snprintf(busyJson, sizeof(busyJson),
+             "{\"ok\":false,\"error\":\"baseline scan busy\",\"progressCell\":%u}",
+             (unsigned)modbusReg50BaseImpProgress);
+    s_server.send(409, "application/json", busyJson);
+    return;
+  }
+
+  modbusOnFc06Reg50Write(1);
+  static char okJson[160];
+  snprintf(okJson, sizeof(okJson),
+           "{\"ok\":true,\"started\":true,\"progressCell\":%u}",
+           (unsigned)modbusReg50BaseImpProgress);
+  s_server.send(200, "application/json", okJson);
+}
+
+static void handleApiImpedanceBaselineStatusGet(void)
+{
+  if (!apiRequireSession())
+    return;
+  sendCorsHeaders();
+
+  nvsSystemSet cfg;
+  copySystemConfigSnapshot(&cfg);
+  uint16_t totalCells = cfg.installed_cells;
+  if (totalCells < 1)
+    totalCells = 1;
+  if (totalCells > MAX_INSTALLED_CELLS)
+    totalCells = MAX_INSTALLED_CELLS;
+
+  const uint16_t progressCell = modbusReg50BaseImpProgress;
+  const bool running = (progressCell > 0 && progressCell <= totalCells);
+  const uint16_t completed = running ? (uint16_t)(progressCell - 1u) : 0u;
+  const uint16_t percent = running
+                               ? (uint16_t)(((uint32_t)completed * 100u) / (uint32_t)totalCells)
+                               : 0u;
+
+  static char json[256];
+  snprintf(json, sizeof(json),
+           "{\"ok\":true,\"running\":%s,\"progressCell\":%u,\"completedCells\":%u,\"totalCells\":%u,\"percent\":%u}",
+           running ? "true" : "false",
+           (unsigned)progressCell,
+           (unsigned)completed,
+           (unsigned)totalCells,
+           (unsigned)percent);
+  s_server.send(200, "application/json", json);
 }
 
 static void handleApiBmsConfigGet(void)
@@ -950,7 +1010,7 @@ static void readFileToWeb(const char *contentType, const char *filename)
   s_server.sendHeader("Expires", "-1");
   s_server.send(200, contentTypeWithCharset(contentType), "");
 
-  char *buf = (char *)allocIoBuffer(1024);
+  char *buf = (char *)allocIoBuffer(512);
   if (!buf)
   {
     s_server.send(500, "text/plain", "buffer alloc failed");
@@ -968,14 +1028,13 @@ static void readFileToWeb(const char *contentType, const char *filename)
   uint32_t chunkCount = 0;
   while (!feof(fp))
   {
-    const size_t n = fread(buf, 1, 1024, fp);
+    const size_t n = fread(buf, 1, 512, fp);
     if (n > 0)
     {
       s_server.sendContent(buf, n);
       chunkCount++;
-      /* 긴 파일 전송 시 Wi-Fi/LwIP task에 실행 기회를 준다. */
-      if ((chunkCount % 4u) == 0u)
-        delay(1);
+      /* 정적 파일 응답 중 AP starvation 방지: 매 chunk마다 양보 */
+      delay(1);
     }
   }
   fclose(fp);
@@ -1269,6 +1328,8 @@ void restApiInit(void)
   s_server.on("/api/logout", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/network-config", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/bms-config", HTTP_OPTIONS, sendApiPreflight);
+  s_server.on("/api/impedance-baseline/start", HTTP_OPTIONS, sendApiPreflight);
+  s_server.on("/api/impedance-baseline/status", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/system-action", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/battery", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/upload", HTTP_OPTIONS, handleUploadOptions);
@@ -1281,6 +1342,8 @@ void restApiInit(void)
   s_server.on("/api/network-config", HTTP_POST, handleApiNetworkConfigPost);
   s_server.on("/api/bms-config", HTTP_GET, handleApiBmsConfigGet);
   s_server.on("/api/bms-config", HTTP_POST, handleApiBmsConfigPost);
+  s_server.on("/api/impedance-baseline/start", HTTP_POST, handleApiImpedanceBaselineStartPost);
+  s_server.on("/api/impedance-baseline/status", HTTP_GET, handleApiImpedanceBaselineStatusGet);
   s_server.on("/api/system-action", HTTP_POST, handleApiSystemActionPost);
   s_server.on("/api/battery", HTTP_GET, handleApiBattery);
 

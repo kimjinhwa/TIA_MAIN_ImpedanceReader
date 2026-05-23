@@ -179,35 +179,43 @@ myBlueTooth::myBlueTooth(){
 
 void myBlueTooth::readInputSerialBT()
 {
-  char readBuf[2];
-  char readCount = 0;
-  // while (true)
+  Stream *src = nullptr;
+
+  /* BT 연결 시 BT 우선, 미연결이면 Serial CLI로 폴백 */
+  if (SerialBT.connected() && SerialBT.available())
+    src = &SerialBT;
+  else if (Serial.available())
+    src = &Serial;
+  else
+    return;
+
+  char ch = 0;
+  if (src->readBytes(&ch, 1) != 1)
+    return;
+
+  /* Backspace/DEL 처리 */
+  if (ch == 8 || ch == 127)
   {
-    if (SerialBT.available())
-    {
-      if (SerialBT.readBytes(readBuf, 1))
-      {
-        readBuf[1] = 0x00;
-        if (readBuf[0] == 8)
-        {
-          input.remove(input.length() - 1);
-        }
-        else
-        {
-          printf("%c", readBuf[0]);
-          input += String(readBuf);
-        }
-      }
-      if (readBuf[0] == '\n' || readBuf[0] == '\r')
-      {
-        simpleCli.parse(input);
-        while (SerialBT.available()) SerialBT.readBytes(readBuf, 1);
-        input = "";
-        printf("\n# ");
-        // break;
-      }
-    }
+    if (input.length() > 0)
+      input.remove(input.length() - 1);
+    return;
   }
+
+  /* CR/LF에서 명령 실행 */
+  if (ch == '\n' || ch == '\r')
+  {
+    if (input.length() > 0)
+      simpleCli.parse(input);
+    input = "";
+
+    if (simpleCli.outputStream)
+      simpleCli.outputStream->print("\n# ");
+    else
+      Serial.print("\n# ");
+    return;
+  }
+
+  input += ch;
 }
 // void btCallBack(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 //   if (event == ESP_SPP_OPEN_EVT                    ) {

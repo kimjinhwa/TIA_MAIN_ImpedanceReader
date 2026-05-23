@@ -11,6 +11,7 @@
 #include "ModbusTypeDefs.h"
 #include "EEPROM.h"
 #include "ModbusServerRTU.h"
+#include <esp_heap_caps.h>
 
 LittleFileSystem lsFile;
 SimpleCLI simpleCli;
@@ -61,6 +62,74 @@ void df_configCallback(cmd *cmdPtr)
 {
   Command cmd(cmdPtr);
   lsFile.df();
+}
+void heap_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+  (void)cmd;
+
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t minFreeHeap = ESP.getMinFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  const size_t free8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  const size_t largest8bit = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+
+  simpleCli.outputStream->printf(
+      "\r\n[heap] free=%uB min_free=%uB max_alloc=%uB free8=%uB largest8=%uB\r\n",
+      (unsigned)freeHeap,
+      (unsigned)minFreeHeap,
+      (unsigned)maxAllocHeap,
+      (unsigned)free8bit,
+      (unsigned)largest8bit);
+}
+
+void heapwatch_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+
+  int count = 10;       // default: 10회
+  int intervalMs = 1000; // default: 1초
+
+  Argument argCount = cmd.getArgument(0);
+  if (argCount.isSet())
+  {
+    int v = argCount.getValue().toInt();
+    if (v > 0 && v <= 300)
+      count = v;
+  }
+
+  Argument argInterval = cmd.getArgument(1);
+  if (argInterval.isSet())
+  {
+    int v = argInterval.getValue().toInt();
+    if (v >= 100 && v <= 60000)
+      intervalMs = v;
+  }
+
+  simpleCli.outputStream->printf(
+      "\r\n[heapwatch] count=%d interval=%dms\r\n",
+      count, intervalMs);
+
+  for (int i = 1; i <= count; i++)
+  {
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    const uint32_t minFreeHeap = ESP.getMinFreeHeap();
+    const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+    const size_t free8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largest8bit = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+
+    simpleCli.outputStream->printf(
+        "[%03d/%03d] free=%uB min_free=%uB max_alloc=%uB free8=%uB largest8=%uB\r\n",
+        i, count,
+        (unsigned)freeHeap,
+        (unsigned)minFreeHeap,
+        (unsigned)maxAllocHeap,
+        (unsigned)free8bit,
+        (unsigned)largest8bit);
+
+    if (i < count)
+      delay(intervalMs);
+  }
 }
 void reboot_configCallback(cmd *cmdPtr)
 {
@@ -585,6 +654,11 @@ SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize, Print *outputStre
   cmd_config.addArgument("s/econd","");
   cmd_config.setDescription(" Get Time or set \r\n time -y 2024 or time -M 11,..., Month is M , minute is m ");
   cmd_config = addCommand("df", df_configCallback);
+  cmd_config = addCommand("heap", heap_configCallback);
+  cmd_config = addCommand("heapwatch", heapwatch_configCallback);
+  cmd_config.addPositionalArgument("count");
+  cmd_config.addPositionalArgument("interval_ms");
+  cmd_config.setDescription("heapwatch [count] [interval_ms]\r\n예) heapwatch 20 500");
   cmd_config = addSingleArgCmd("reboot", reboot_configCallback);
 
   cmd_config = addCommand("r/elay", relay_configCallback);

@@ -164,6 +164,70 @@ async function runSystemAction(action, confirmMessage, successMessage) {
     }
 }
 
+function setBaselineStatus(text) {
+    setText("impBaselineStatusText", text);
+}
+
+async function checkImpedanceBaselineStatus() {
+    try {
+        const response = await fetch(apiUrl("/api/impedance-baseline/status"), {
+            method: "GET",
+            credentials: "include"
+        });
+        if (!response.ok) {
+            setBaselineStatus("진행상태 조회 실패: " + response.status);
+            return;
+        }
+        const payload = await response.json();
+        if (!payload.ok) {
+            setBaselineStatus("진행상태 조회 실패");
+            return;
+        }
+        if (payload.running) {
+            setBaselineStatus(
+                "진행중: " + payload.progressCell + "/" + payload.totalCells +
+                " (" + payload.percent + "%)"
+            );
+        } else {
+            setBaselineStatus("대기/완료 상태 (총 " + payload.totalCells + "셀)");
+        }
+    } catch (error) {
+        console.log(error);
+        setBaselineStatus("진행상태 조회 네트워크 오류");
+    }
+}
+
+async function startImpedanceBaseline() {
+    const ok = window.confirm(
+        "충전기 분리 후 실행하세요.\n유효 내부저항을 EEPROM 기준값으로 순차 저장합니다.\n\n진행하시겠습니까?"
+    );
+    if (!ok) {
+        setBaselineStatus("작업 취소됨");
+        return;
+    }
+
+    try {
+        setBaselineStatus("시작 요청중...");
+        const response = await fetch(apiUrl("/api/impedance-baseline/start"), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+        });
+        if (!response.ok) {
+            let reason = "";
+            try { reason = await response.text(); } catch (e) {}
+            setBaselineStatus("시작 실패: " + response.status + (reason ? " (" + reason + ")" : ""));
+            return;
+        }
+        setBaselineStatus("시작됨. 진행상태를 조회하세요.");
+        await checkImpedanceBaselineStatus();
+    } catch (error) {
+        console.log(error);
+        setBaselineStatus("시작 요청 네트워크 오류");
+    }
+}
+
 async function ensureAuthenticated() {
     if (DEV_AUTH_BYPASS) return true;
     if (isLocalPreview) {
@@ -223,6 +287,8 @@ window.addEventListener("load", async function () {
     const formatFsBtn = document.getElementById("formatFsBtn");
     const resetSystemBtn = document.getElementById("resetSystemBtn");
     const rebootSystemBtn = document.getElementById("rebootSystemBtn");
+    const startBaselineBtn = document.getElementById("startBaselineBtn");
+    const checkBaselineBtn = document.getElementById("checkBaselineBtn");
     if (loadBmsConfigBtn) {
         loadBmsConfigBtn.addEventListener("click", function () {
             loadBmsConfig();
@@ -261,5 +327,17 @@ window.addEventListener("load", async function () {
         });
     }
 
+    if (startBaselineBtn) {
+        startBaselineBtn.addEventListener("click", function () {
+            startImpedanceBaseline();
+        });
+    }
+    if (checkBaselineBtn) {
+        checkBaselineBtn.addEventListener("click", function () {
+            checkImpedanceBaselineStatus();
+        });
+    }
+
+    setBaselineStatus("대기중");
     setText("statusText", "조회 버튼으로 설정값을 읽어오세요");
 });

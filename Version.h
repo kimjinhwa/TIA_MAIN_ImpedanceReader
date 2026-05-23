@@ -1,4 +1,6 @@
-#define VERSION "1.0.9" // web 조회/설정을 완료함. 
+#define VERSION "1.0.11" // Serial Cmd를 추가하여 heap를 볼수 있게 했다. 
+//#define VERSION "1.0.10" // 네트웍을 안정적으로 유지  
+//#define VERSION "1.0.9" // web 조회/설정을 완료함. 
 //#define VERSION "1.0.8" // Modbus 485 통신 기능 테스트 완료 
 //#define VERSION "1.0.7" // CT 전류 측정 까지 실측하여 정확하게 보정함. 
 //#define VERSION "1.0.6" // NTC 측정 추가.  
