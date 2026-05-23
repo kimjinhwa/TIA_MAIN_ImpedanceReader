@@ -12,12 +12,17 @@
 #include "EEPROM.h"
 #include "ModbusServerRTU.h"
 #include <esp_heap_caps.h>
+#include <esp_log.h>
 
 LittleFileSystem lsFile;
 SimpleCLI simpleCli;
 extern BatDeviceInterface batDevice;
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern uint16_t startBatnumber;
+extern bool btLogMirrorIsEnabled(void);
+extern void btLogMirrorSetEnabled(bool enabled);
+extern bool espLogIsEnabled(void);
+extern void espLogSetEnabled(bool enabled);
 
 static char TAG[] ="CLI" ;
 extern "C" {
@@ -27,7 +32,7 @@ extern "C" {
 }
 //int makeRelayControllData(uint8_t *buf,uint8_t modbusId,uint8_t funcCode, uint16_t address, uint16_t len);
 void AD5940_Main(void *parameters);
-void readnWriteEEProm();
+bool readnWriteEEProm(bool writeMode);
 
 
 void initEEPROM_configCallback(cmd *cmdPtr){
@@ -130,6 +135,70 @@ void heapwatch_configCallback(cmd *cmdPtr)
     if (i < count)
       delay(intervalMs);
   }
+}
+
+void btlog_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+  Argument arg = cmd.getArgument(0);
+  String argVal = arg.getValue();
+  argVal.toLowerCase();
+
+  if (argVal.length() == 0 || argVal == "status")
+  {
+    simpleCli.outputStream->printf("\r\n[btlog] %s\r\n",
+                                   btLogMirrorIsEnabled() ? "on" : "off");
+    return;
+  }
+
+  if (argVal == "on" || argVal == "1")
+  {
+    btLogMirrorSetEnabled(true);
+    simpleCli.outputStream->printf("\r\n[btlog] on\r\n");
+    return;
+  }
+
+  if (argVal == "off" || argVal == "0")
+  {
+    btLogMirrorSetEnabled(false);
+    simpleCli.outputStream->printf("\r\n[btlog] off\r\n");
+    return;
+  }
+
+  simpleCli.outputStream->printf("\r\nUsage: btlog [on|off|status]\r\n");
+}
+
+void esplog_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+  Argument arg = cmd.getArgument(0);
+  String argVal = arg.getValue();
+  argVal.toLowerCase();
+
+  if (argVal.length() == 0 || argVal == "status")
+  {
+    simpleCli.outputStream->printf("\r\n[esplog] %s\r\n",
+                                   espLogIsEnabled() ? "on" : "off");
+    return;
+  }
+
+  if (argVal == "on" || argVal == "1")
+  {
+    espLogSetEnabled(true);
+    esp_log_level_set("*", ESP_LOG_INFO);
+    simpleCli.outputStream->printf("\r\n[esplog] on\r\n");
+    return;
+  }
+
+  if (argVal == "off" || argVal == "0")
+  {
+    espLogSetEnabled(false);
+    esp_log_level_set("*", ESP_LOG_NONE);
+    simpleCli.outputStream->printf("\r\n[esplog] off\r\n");
+    return;
+  }
+
+  simpleCli.outputStream->printf("\r\nUsage: esplog [on|off|status]\r\n");
 }
 void reboot_configCallback(cmd *cmdPtr)
 {
@@ -659,6 +728,10 @@ SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize, Print *outputStre
   cmd_config.addPositionalArgument("count");
   cmd_config.addPositionalArgument("interval_ms");
   cmd_config.setDescription("heapwatch [count] [interval_ms]\r\n예) heapwatch 20 500");
+  cmd_config = addSingleArgCmd("btlog", btlog_configCallback);
+  cmd_config.setDescription("btlog [on|off|status]\r\nBluetooth log mirror control");
+  cmd_config = addSingleArgCmd("esplog", esplog_configCallback);
+  cmd_config.setDescription("esplog [on|off|status]\r\nEnable/disable ESP_LOG output");
   cmd_config = addSingleArgCmd("reboot", reboot_configCallback);
 
   cmd_config = addCommand("r/elay", relay_configCallback);

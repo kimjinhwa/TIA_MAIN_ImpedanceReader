@@ -1,4 +1,5 @@
-#define VERSION "1.0.11" // Serial Cmd를 추가하여 heap를 볼수 있게 했다. 
+#define VERSION "1.0.12" // 셀 게인, 셀 오프셋, 홀 CT 사용 설정값을 EEPROM에 저장하고 읽을수 있게 했다. 
+//#define VERSION "1.0.11" // Serial Cmd를 추가하여 heap를 볼수 있게 했다. 
 //#define VERSION "1.0.10" // 네트웍을 안정적으로 유지  
 //#define VERSION "1.0.9" // web 조회/설정을 완료함. 
 //#define VERSION "1.0.8" // Modbus 485 통신 기능 테스트 완료 

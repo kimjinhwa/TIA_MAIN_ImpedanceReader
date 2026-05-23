@@ -18,6 +18,8 @@ static Ads1220CtScale s_ctScale = {
     ADS1220_CT_VOLTS_SPAN_DEFAULT,
     1.0f,
 };
+static float s_voltageGainRatio = VOLTAGE_GAIN_RATIO;
+static float s_voltageOffsetVolts = VOLTAGE_OFFSET;
 
 /* ADS1220 SPI commands (TI SBAS501) */
 static constexpr uint8_t kCmdReset = 0x06u;
@@ -308,9 +310,24 @@ int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint
 float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs)
 {
   const int32_t raw = Ads1220_readAveragedRawOnChannel(ainIndex, samples, timeoutMsPerSample, interSampleDelayUs);
-  const float voltage = Ads1220_rawToVoltsWithOffset(raw, 1, VOLTAGE_GAIN_RATIO);
+  const float voltage = Ads1220_rawToVoltsWithOffset(raw, 1, s_voltageGainRatio);
   const float compensation = Ads1220VolateCompensation(voltage);
   return voltage + compensation;
+}
+
+void Ads1220_setVoltageCalibration(float gainRatio, float offsetVolts)
+{
+  if (gainRatio > 0.0001f)
+    s_voltageGainRatio = gainRatio;
+  s_voltageOffsetVolts = offsetVolts;
+}
+
+void Ads1220_getVoltageCalibration(float *gainRatioOut, float *offsetVoltsOut)
+{
+  if (gainRatioOut)
+    *gainRatioOut = s_voltageGainRatio;
+  if (offsetVoltsOut)
+    *offsetVoltsOut = s_voltageOffsetVolts;
 }
 
 void Ads1220_setCtScale(const Ads1220CtScale *scale)
@@ -375,5 +392,5 @@ float Ads1220_rawToVoltsWithOffset(int32_t raw24, uint8_t pgaGain, float gainRat
     pgaGain = 1;
   /* 단일단·양의 입력 근사: Code는 24비트 2의 보수, 풀스케일은 Vref/gain 근처 */
   const float scale = vrefVolts / (8388608.0f * (float)pgaGain);
-  return (float)raw24 * scale * gainRatio + VOLTAGE_OFFSET;
+  return (float)raw24 * scale * gainRatio + s_voltageOffsetVolts;
 }

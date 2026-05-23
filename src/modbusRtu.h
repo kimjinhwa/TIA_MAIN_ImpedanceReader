@@ -21,6 +21,19 @@ void modbusOnFc06Reg50Write(uint16_t value);
 void modbusBaselineScanPoll(void);
 
 bool modbusBaselineScanIsActive(void);
+bool modbusHasCurrentSensor(void);
+uint16_t modbusGetUseHoleCt(void);
+int16_t modbusGetAmpereOffset(void);
+uint16_t modbusGetAmpereGain(void);
+uint16_t modbusGetCellGain(void);
+int16_t modbusGetCellOffset(void);
+void modbusSetUseHoleCt(uint16_t value);
+void modbusSetAmpereOffset(int16_t value);
+void modbusSetAmpereGain(uint16_t value);
+void modbusSetCellGain(uint16_t value);
+void modbusSetCellOffset(int16_t value);
+void modbusLoadCalibFromEeprom(void);
+void modbusSaveCalibToEeprom(void);
 
 void setErrorMessageToModbus(bool setError, const char *msg);
 

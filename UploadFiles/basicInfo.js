@@ -54,6 +54,11 @@ async function loadBmsConfig() {
         }
         const payload = await response.json();
         const cfg = payload.bmsControl || {};
+        const cellGain = Number(cfg.cellGain);
+        const cellOffset = Number(cfg.cellOffset);
+        const useHoleCt = Number(cfg.useHoleCT);
+        const ampereOffset = Number(cfg.ampereOffset);
+        const ampereGain = Number(cfg.ampereGain);
         const percent = Number(cfg.impedanceEepromChangePercent);
         const period = Number(cfg.impedanceMeasurePeriodSec);
         const readMax = Number(cfg.impedanceReadMax);
@@ -62,6 +67,11 @@ async function loadBmsConfig() {
         const postSamples = Number(cfg.impedancePostStableSamples);
         const minValidMohm = Number(cfg.impedanceMinValidMohm);
 
+        const cellGainInput = document.getElementById("cellGainInput");
+        const cellOffsetInput = document.getElementById("cellOffsetInput");
+        const useHoleCtInput = document.getElementById("useHoleCtInput");
+        const ampereOffsetInput = document.getElementById("ampereOffsetInput");
+        const ampereGainInput = document.getElementById("ampereGainInput");
         const percentInput = document.getElementById("impChangePercentInput");
         const periodInput = document.getElementById("impPeriodSecInput");
         const readMaxInput = document.getElementById("impReadMaxInput");
@@ -69,6 +79,11 @@ async function loadBmsConfig() {
         const stableTolInput = document.getElementById("impStableTolPercentInput");
         const postSamplesInput = document.getElementById("impPostStableSamplesInput");
         const minValidInput = document.getElementById("impMinValidMohmInput");
+        if (cellGainInput && Number.isFinite(cellGain)) cellGainInput.value = String(cellGain);
+        if (cellOffsetInput && Number.isFinite(cellOffset)) cellOffsetInput.value = String(cellOffset);
+        if (useHoleCtInput && Number.isFinite(useHoleCt)) useHoleCtInput.value = String(useHoleCt);
+        if (ampereOffsetInput && Number.isFinite(ampereOffset)) ampereOffsetInput.value = String(ampereOffset);
+        if (ampereGainInput && Number.isFinite(ampereGain)) ampereGainInput.value = String(ampereGain);
         if (percentInput && Number.isFinite(percent)) percentInput.value = String(percent);
         if (periodInput && Number.isFinite(period)) periodInput.value = String(period);
         if (readMaxInput && Number.isFinite(readMax)) readMaxInput.value = String(readMax);
@@ -85,6 +100,11 @@ async function loadBmsConfig() {
 }
 
 async function saveBmsConfig() {
+    const cellGainRaw = Number(document.getElementById("cellGainInput")?.value || "0");
+    const cellOffsetRaw = Number(document.getElementById("cellOffsetInput")?.value || "0");
+    const useHoleCtRaw = Number(document.getElementById("useHoleCtInput")?.value || "0");
+    const ampereOffsetRaw = Number(document.getElementById("ampereOffsetInput")?.value || "0");
+    const ampereGainRaw = Number(document.getElementById("ampereGainInput")?.value || "0");
     const percentRaw = Number(document.getElementById("impChangePercentInput")?.value || "0");
     const periodRaw = Number(document.getElementById("impPeriodSecInput")?.value || "0");
     const readMaxRaw = Number(document.getElementById("impReadMaxInput")?.value || "0");
@@ -92,6 +112,11 @@ async function saveBmsConfig() {
     const stableTolRaw = Number(document.getElementById("impStableTolPercentInput")?.value || "0");
     const postSamplesRaw = Number(document.getElementById("impPostStableSamplesInput")?.value || "0");
     const minValidMohmRaw = Number(document.getElementById("impMinValidMohmInput")?.value || "0");
+    const cellGain = clampInt(cellGainRaw, 1, 65535);
+    const cellOffset = clampInt(cellOffsetRaw, -32768, 32767);
+    const useHoleCt = clampInt(useHoleCtRaw, 0, 65535);
+    const ampereOffset = clampInt(ampereOffsetRaw, -32768, 32767);
+    const ampereGain = clampInt(ampereGainRaw, 1, 65535);
     const percent = clampInt(percentRaw, 1, 100);
     const period = clampInt(periodRaw, 1, 65535);
     const readMax = clampInt(readMaxRaw, 1, 120);
@@ -100,8 +125,8 @@ async function saveBmsConfig() {
     const postSamples = clampInt(postSamplesRaw, 1, 20);
     const minValidMohm = Number.isFinite(minValidMohmRaw) ? Math.round(minValidMohmRaw * 10) / 10 : NaN;
 
-    if (percent === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000) {
-        setText("statusText", "입력 범위: 임계치(1~100), 주기(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000)");
+    if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000) {
+        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 주기(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000)");
         return;
     }
 
@@ -113,6 +138,11 @@ async function saveBmsConfig() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 bmsControl: {
+                    cellGain: cellGain,
+                    cellOffset: cellOffset,
+                    useHoleCT: useHoleCt,
+                    ampereOffset: ampereOffset,
+                    ampereGain: ampereGain,
                     impedanceEepromChangePercent: percent,
                     impedanceMeasurePeriodSec: period,
                     impedanceReadMax: readMax,

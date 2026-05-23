@@ -100,7 +100,8 @@ extern nvsSystemSet systemDefaultValue;
 #define EEPROM_NV_MAGIC_HEAD 0x55u
 #define EEPROM_NV_MAGIC_TAIL 0xAAu
 #define EEPROM_NV_TAIL_BYTE_OFFSET (1u + sizeof(nvsSystemSet))
-#define EEPROM_NV_RESERVED_BYTES   (2u + sizeof(nvsSystemSet))
+#define EEPROM_MODBUS_CAL_BYTES    12u
+#define EEPROM_NV_RESERVED_BYTES   (2u + sizeof(nvsSystemSet) + EEPROM_MODBUS_CAL_BYTES)
 
 typedef struct {
   time_t readTime; // 4byte
@@ -135,6 +136,8 @@ extern const int measuredImpedance_2[20];
 extern const int measuredVoltage_2[20];
 
 #ifdef __cplusplus
+bool readnWriteEEProm(bool writeMode);
+
 /** IN_TH1(GPIO34), IN_TH2(GPIO35) NTC — Modbus FC04 주소 16·17 (0.1°C) */
 extern int16_t ntcTemperatureC_x10[2];
 void ntcTemperatureInit(void);

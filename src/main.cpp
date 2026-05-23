@@ -31,6 +31,7 @@
 // #include <esp_int_wdt.h>
 // #include <esp_task.h>
 #include <esp_task_wdt.h>
+#include <esp_log.h>
 
 #define MAIN_POWEROFF HIGH
 #define MAIN_POWERON LOW 
@@ -81,6 +82,11 @@ extern SimpleCLI simpleCli;
 uint16_t startBatnumber=1;
 
 BluetoothSerial SerialBT;
+using LogVprintfFn = int (*)(const char *, va_list);
+static LogVprintfFn s_prevLogVprintf = nullptr;
+static volatile bool s_btLogMirrorEnabled = false;
+static volatile bool s_espLogEnabled = true;
+static bool s_lastEspLogEnabledApplied = true;
 
 BatDeviceInterface batDevice;
 
@@ -91,6 +97,61 @@ float AD5940_calibration(float *real , float *image);
 float AD5940_readImpMagnitude(fImpCar_Type *pCarOut);
 void changeAD5940ToMeasurement(bool bChange);
 uint8_t get485Address();
+
+static int btMirrorVprintf(const char *fmt, va_list args)
+{
+  if (!s_espLogEnabled)
+    return 0;
+
+  va_list copyForPrev;
+  va_copy(copyForPrev, args);
+  const int ret = s_prevLogVprintf ? s_prevLogVprintf(fmt, copyForPrev) : vprintf(fmt, copyForPrev);
+  va_end(copyForPrev);
+
+  if (s_btLogMirrorEnabled && SerialBT.connected() && fmt)
+  {
+    char line[256];
+    va_list copyForBt;
+    va_copy(copyForBt, args);
+    const int n = vsnprintf(line, sizeof(line), fmt, copyForBt);
+    va_end(copyForBt);
+    if (n > 0)
+    {
+      const size_t outLen = (size_t)((n < (int)(sizeof(line) - 1)) ? n : (int)(sizeof(line) - 1));
+      SerialBT.write((const uint8_t *)line, outLen);
+    }
+  }
+
+  return ret;
+}
+
+static void installBtLogMirror(void)
+{
+  if (!s_prevLogVprintf)
+    s_prevLogVprintf = esp_log_set_vprintf(btMirrorVprintf);
+}
+
+bool btLogMirrorIsEnabled(void)
+{
+  return s_btLogMirrorEnabled;
+}
+
+void btLogMirrorSetEnabled(bool enabled)
+{
+  s_btLogMirrorEnabled = enabled;
+}
+
+bool espLogIsEnabled(void)
+{
+  return s_espLogEnabled;
+}
+
+void espLogSetEnabled(bool enabled)
+{
+  s_espLogEnabled = enabled;
+  esp_log_level_set("*", enabled ? ESP_LOG_INFO : ESP_LOG_NONE);
+  s_lastEspLogEnabledApplied = enabled;
+}
 
 void pinsetup()
 {
@@ -234,8 +295,17 @@ void wifiApmodeConfig()
   restApiInit();
 #endif
 }
-void readnWriteEEProm()
+bool readnWriteEEProm(bool writeMode)
 {
+  if (writeMode)
+  {
+    eepromNvsWriteBlock(&systemDefaultValue);
+    modbusSaveCalibToEeprom();
+    const bool saved = EEPROM.commit();
+    if (saved)
+      EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    return saved;
+  }
   uint8_t ipaddr1;
   dataSyncLockSystemConfig();
   if (!eepromNvsBlockLooksValid())
@@ -312,7 +382,9 @@ void readnWriteEEProm()
   ESP_LOGI(TAG, "Real calibration: %f", systemDefaultValue.real_Cal);
   ESP_LOGI(TAG, "Image calibration: %f", systemDefaultValue.image_Cal);
   ESP_LOGI(TAG, "Log level: %d", systemDefaultValue.logLevel);
+  modbusLoadCalibFromEeprom();
   dataSyncUnlockSystemConfig();
+  return true;
 }
 
 void setupModbusAgentForexternal485(){
@@ -679,20 +751,21 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
     const float oldM = impEepromCentiToMohm(oldC);
     const float pct = oldM > 0.0f ? ((z_mOhm - oldM) / oldM) * 100.0f : 0.0f;
     const float minPct = (float)minPctCfg;
-    ESP_LOGI(TAG,
-             "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
-             (unsigned)batNo, oldM, z_mOhm, pct, minPct);
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG,
+               "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
+               (unsigned)batNo, oldM, z_mOhm, pct, minPct);
     dataSyncUnlockSystemConfig();
     return false;
   }
 
   systemDefaultValue.baseImpendance[idx] = newC;
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
-  ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
-           (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
+  if (s_espLogEnabled)
+    ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
+             (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
   return true;
 }
 
@@ -758,7 +831,8 @@ static float readCellVoltageForBat(int batNo)
       &s_cellVoltRingSum[idx], vAvg);
   cellvalue[idx].voltage = vFiltered;
 
-  ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
+  if (s_espLogEnabled)
+    ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
   return vFiltered;
 }
 
@@ -778,8 +852,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   {
     cellvalue[idx].impendance = 0.0f;
     *outZ = 0.0f;
-    ESP_LOGI(TAG, "cell %u Z skipped — no battery (V=%.4f < %.2f V)",
-             (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "cell %u Z skipped — no battery (V=%.4f < %.2f V)",
+               (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
     return false;
   }
 
@@ -795,8 +870,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   const uint8_t stableWindow = impedanceStableWindow(readMax);
 
 #if IMP_MONITOR_LOG_ALL
-  ESP_LOGI(TAG, "cell %u Z monitor start (max %u reads, window %u)",
-           (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
+  if (s_espLogEnabled)
+    ESP_LOGI(TAG, "cell %u Z monitor start (max %u reads, window %u)",
+             (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
 #endif
 
   for (uint16_t i = 0; i < readMax; i++)
@@ -804,8 +880,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     fImpCar_Type car;
     const float mag = AD5940_readImpMagnitude(&car);
 #if IMP_MONITOR_LOG_ALL
-    ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
-             (unsigned)batNo, i + 1, mag, car.Real, car.Image);
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
+               (unsigned)batNo, i + 1, mag, car.Real, car.Image);
 #endif
     if (!impSampleUsable(&car))
     {
@@ -830,7 +907,8 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
         fImpCar_Type postCar;
         const float postMag = AD5940_readImpMagnitude(&postCar);
 #if IMP_MONITOR_LOG_ALL
-        ESP_LOGI(TAG, "  cell %u Z post #%d: %.3f mOhm", (unsigned)batNo, postCount + 1, postMag);
+        if (s_espLogEnabled)
+          ESP_LOGI(TAG, "  cell %u Z post #%d: %.3f mOhm", (unsigned)batNo, postCount + 1, postMag);
 #endif
         if (!impSampleUsable(&postCar))
           continue;
@@ -853,10 +931,11 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
         cellvalue[idx].baseVoltage = systemDefaultValue.baseVoltage[idx];
         cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
 
-        ESP_LOGI(TAG,
-                 "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
-                 (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
-                 postCount, i + 1 + postCount);
+        if (s_espLogEnabled)
+          ESP_LOGI(TAG,
+                   "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
+                   (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
+                   postCount, i + 1 + postCount);
         tryPersistCellImpedanceToEeprom((unsigned)batNo, cellvalue[idx].impendance);
         return true;
       }
@@ -868,9 +947,10 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   if (*outZ <= 0.0f)
     *outZ = prevZ;
 
-  ESP_LOGW(TAG,
-           "cell %u Z: not stable in %d reads (likely charging) — using EEPROM %.3f mOhm",
-           (unsigned)batNo, (int)readMax, *outZ);
+  if (s_espLogEnabled)
+    ESP_LOGW(TAG,
+             "cell %u Z: not stable in %d reads (likely charging) — using EEPROM %.3f mOhm",
+             (unsigned)batNo, (int)readMax, *outZ);
   return false;
 }
 
@@ -883,11 +963,11 @@ static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
     return;
   dataSyncLockSystemConfig();
   systemDefaultValue.baseImpendance[idx] = newC;
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
-  ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, z_mOhm);
+  if (s_espLogEnabled)
+    ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, z_mOhm);
 }
 
 static bool s_baselineScanRunCell = false;
@@ -904,7 +984,8 @@ void modbusOnFc06Reg50Write(uint16_t value)
   {
     modbusReg50BaseImpProgress = 1;
     s_baselineScanRunCell = true;
-    ESP_LOGI(TAG, "Modbus baseline Z scan start");
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "Modbus baseline Z scan start");
   }
 }
 
@@ -933,7 +1014,8 @@ void modbusBaselineScanPoll(void)
   if ((unsigned)bat >= n)
   {
     modbusReg50BaseImpProgress = 0;
-    ESP_LOGI(TAG, "Modbus baseline Z scan complete (%u cells)", (unsigned)n);
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "Modbus baseline Z scan complete (%u cells)", (unsigned)n);
     return;
   }
 
@@ -958,7 +1040,7 @@ void setup()
 
   dataSyncInit();
   EEPROM.begin((unsigned)EEPROM_NV_RESERVED_BYTES);
-  readnWriteEEProm();
+  (void)readnWriteEEProm(false);
   pinsetup();
   ntcTemperatureInit();
   ntcTemperatureUpdate();
@@ -982,6 +1064,7 @@ void setup()
   bleName += "_";
   bleName += systemDefaultValue.modbusId;
   SerialBT.begin(bleName.c_str());
+  installBtLogMirror();
   Serial.printf("\nBluetooth Name : %s\n",bleName.c_str());
   wifiApmodeConfig();
   printWebLoginCredentials();
@@ -1087,7 +1170,11 @@ void setup()
 
 void loop(void)
 {
-  esp_log_level_set("*", ESP_LOG_INFO);
+  if (s_lastEspLogEnabledApplied != s_espLogEnabled)
+  {
+    esp_log_level_set("*", s_espLogEnabled ? ESP_LOG_INFO : ESP_LOG_NONE);
+    s_lastEspLogEnabledApplied = s_espLogEnabled;
+  }
   now = millis();
   esp_task_wdt_reset();
 
@@ -1183,9 +1270,10 @@ void loop(void)
     lastNtcReadMs = now;
     ntcTemperatureUpdate();
     ctCurrentUpdate();
-    ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
-             ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
-             ctCurrentGetAmps(), packCurrentAin2Volts);
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
+               ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
+               ctCurrentGetAmps(), packCurrentAin2Volts);
   }
 
 #ifdef WIFI_AP_MODE

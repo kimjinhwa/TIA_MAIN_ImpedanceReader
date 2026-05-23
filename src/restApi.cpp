@@ -506,8 +506,7 @@ static void handleApiNetworkConfigPost(void)
       copyCfgField(systemDefaultValue.userpassword, sizeof(systemDefaultValue.userpassword), webPw);
   }
 
-  eepromNvsWriteBlock(&systemDefaultValue);
-  const bool saved = EEPROM.commit();
+  const bool saved = readnWriteEEProm(true);
   dataSyncUnlockSystemConfig();
 
   if (!saved)
@@ -662,8 +661,7 @@ static void handleApiSystemActionPost(void)
   {
     dataSyncLockSystemConfig();
     applySystemDefaultsLocked(&systemDefaultValue);
-    eepromNvsWriteBlock(&systemDefaultValue);
-    const bool saved = EEPROM.commit();
+    const bool saved = readnWriteEEProm(true);
     dataSyncUnlockSystemConfig();
     if (!saved)
     {
@@ -758,9 +756,14 @@ static void handleApiBmsConfigGet(void)
   const uint8_t postSamples = bmsSanitizeImpedancePostSamples(cfg.TemperatureFactor);
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(cfg.RcalLoopCount);
 
-  static char json[512];
+  static char json[768];
   snprintf(json, sizeof(json),
            "{\"ok\":true,\"bmsControl\":{"
+           "\"cellGain\":%u,"
+           "\"cellOffset\":%d,"
+           "\"useHoleCT\":%u,"
+           "\"ampereOffset\":%d,"
+           "\"ampereGain\":%u,"
            "\"impedanceEepromChangePercent\":%u,"
            "\"impedanceMeasurePeriodSec\":%u,"
            "\"impedanceReadMax\":%u,"
@@ -769,6 +772,11 @@ static void handleApiBmsConfigGet(void)
            "\"impedancePostStableSamples\":%u,"
            "\"impedanceMinValidMohm\":%.1f"
            "}}",
+           (unsigned)modbusGetCellGain(),
+           (int)modbusGetCellOffset(),
+           (unsigned)modbusGetUseHoleCt(),
+           (int)modbusGetAmpereOffset(),
+           (unsigned)modbusGetAmpereGain(),
            (unsigned)changePercent, (unsigned)periodSec,
            (unsigned)readMax, (unsigned)stableWindow,
            (unsigned)stableTolPercent, (unsigned)postSamples,
@@ -800,6 +808,11 @@ static void handleApiBmsConfigPost(void)
   char stableTolText[16] = {0};
   char postSamplesText[16] = {0};
   char minValidText[16] = {0};
+  char cellGainText[16] = {0};
+  char cellOffsetText[16] = {0};
+  char useHoleCtText[16] = {0};
+  char ampOffsetText[16] = {0};
+  char ampGainText[16] = {0};
   const bool hasPercent = jsonExtractInObject(cfgObj, "impedanceEepromChangePercent", percentText, sizeof(percentText));
   const bool hasPeriod = jsonExtractInObject(cfgObj, "impedanceMeasurePeriodSec", periodText, sizeof(periodText));
   const bool hasReadMax = jsonExtractInObject(cfgObj, "impedanceReadMax", readMaxText, sizeof(readMaxText));
@@ -807,6 +820,11 @@ static void handleApiBmsConfigPost(void)
   const bool hasStableTol = jsonExtractInObject(cfgObj, "impedanceStableTolPercent", stableTolText, sizeof(stableTolText));
   const bool hasPostSamples = jsonExtractInObject(cfgObj, "impedancePostStableSamples", postSamplesText, sizeof(postSamplesText));
   const bool hasMinValid = jsonExtractInObject(cfgObj, "impedanceMinValidMohm", minValidText, sizeof(minValidText));
+  const bool hasCellGain = jsonExtractInObject(cfgObj, "cellGain", cellGainText, sizeof(cellGainText));
+  const bool hasCellOffset = jsonExtractInObject(cfgObj, "cellOffset", cellOffsetText, sizeof(cellOffsetText));
+  const bool hasUseHoleCt = jsonExtractInObject(cfgObj, "useHoleCT", useHoleCtText, sizeof(useHoleCtText));
+  const bool hasAmpOffset = jsonExtractInObject(cfgObj, "ampereOffset", ampOffsetText, sizeof(ampOffsetText));
+  const bool hasAmpGain = jsonExtractInObject(cfgObj, "ampereGain", ampGainText, sizeof(ampGainText));
   uint8_t nextPercent = 0;
   uint16_t nextPeriod = 0;
   uint16_t nextReadMax = 0;
@@ -814,11 +832,73 @@ static void handleApiBmsConfigPost(void)
   uint8_t nextStableTol = 0;
   uint8_t nextPostSamples = 0;
   uint16_t nextMinValidDeci = 0;
+  uint16_t nextCellGain = 0;
+  int16_t nextCellOffset = 0;
+  uint16_t nextUseHoleCt = 0;
+  int16_t nextAmpOffset = 0;
+  uint16_t nextAmpGain = 0;
 
-  if (!hasPercent && !hasPeriod && !hasReadMax && !hasStableWindow && !hasStableTol && !hasPostSamples && !hasMinValid)
+  if (!hasPercent && !hasPeriod && !hasReadMax && !hasStableWindow && !hasStableTol &&
+      !hasPostSamples && !hasMinValid && !hasCellGain && !hasCellOffset &&
+      !hasUseHoleCt && !hasAmpOffset && !hasAmpGain)
   {
     s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"no bmsControl fields\"}");
     return;
+  }
+
+  if (hasCellGain)
+  {
+    const long v = strtol(cellGainText, nullptr, 10);
+    if (v < 1 || v > 65535)
+    {
+      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"cellGain out of range(1..65535)\"}");
+      return;
+    }
+    nextCellGain = (uint16_t)v;
+  }
+
+  if (hasCellOffset)
+  {
+    const long v = strtol(cellOffsetText, nullptr, 10);
+    if (v < -32768 || v > 32767)
+    {
+      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"cellOffset out of range(-32768..32767)\"}");
+      return;
+    }
+    nextCellOffset = (int16_t)v;
+  }
+
+  if (hasUseHoleCt)
+  {
+    const long v = strtol(useHoleCtText, nullptr, 10);
+    if (v < 0 || v > 65535)
+    {
+      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"useHoleCT out of range(0..65535)\"}");
+      return;
+    }
+    nextUseHoleCt = (uint16_t)v;
+  }
+
+  if (hasAmpOffset)
+  {
+    const long v = strtol(ampOffsetText, nullptr, 10);
+    if (v < -32768 || v > 32767)
+    {
+      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"ampereOffset out of range(-32768..32767)\"}");
+      return;
+    }
+    nextAmpOffset = (int16_t)v;
+  }
+
+  if (hasAmpGain)
+  {
+    const long v = strtol(ampGainText, nullptr, 10);
+    if (v < 1 || v > 65535)
+    {
+      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"ampereGain out of range(1..65535)\"}");
+      return;
+    }
+    nextAmpGain = (uint16_t)v;
   }
 
   if (hasPercent)
@@ -919,8 +999,17 @@ static void handleApiBmsConfigPost(void)
     systemDefaultValue.TemperatureFactor = nextPostSamples;
   if (hasMinValid)
     systemDefaultValue.RcalLoopCount = nextMinValidDeci;
-  eepromNvsWriteBlock(&systemDefaultValue);
-  if (!EEPROM.commit())
+  if (hasCellGain)
+    modbusSetCellGain(nextCellGain);
+  if (hasCellOffset)
+    modbusSetCellOffset(nextCellOffset);
+  if (hasUseHoleCt)
+    modbusSetUseHoleCt(nextUseHoleCt);
+  if (hasAmpOffset)
+    modbusSetAmpereOffset(nextAmpOffset);
+  if (hasAmpGain)
+    modbusSetAmpereGain(nextAmpGain);
+  if (!readnWriteEEProm(true))
   {
     dataSyncUnlockSystemConfig();
     s_server.send(500, "application/json", "{\"ok\":false,\"error\":\"eeprom commit failed\"}");
@@ -935,9 +1024,14 @@ static void handleApiBmsConfigPost(void)
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(systemDefaultValue.RcalLoopCount);
   dataSyncUnlockSystemConfig();
 
-  static char json[512];
+  static char json[768];
   snprintf(json, sizeof(json),
            "{\"ok\":true,\"bmsControl\":{"
+           "\"cellGain\":%u,"
+           "\"cellOffset\":%d,"
+           "\"useHoleCT\":%u,"
+           "\"ampereOffset\":%d,"
+           "\"ampereGain\":%u,"
            "\"impedanceEepromChangePercent\":%u,"
            "\"impedanceMeasurePeriodSec\":%u,"
            "\"impedanceReadMax\":%u,"
@@ -946,6 +1040,11 @@ static void handleApiBmsConfigPost(void)
            "\"impedancePostStableSamples\":%u,"
            "\"impedanceMinValidMohm\":%.1f"
            "}}",
+           (unsigned)modbusGetCellGain(),
+           (int)modbusGetCellOffset(),
+           (unsigned)modbusGetUseHoleCt(),
+           (int)modbusGetAmpereOffset(),
+           (unsigned)modbusGetAmpereGain(),
            (unsigned)changePercent, (unsigned)periodSec,
            (unsigned)readMax, (unsigned)stableWindow,
            (unsigned)stableTolPercent, (unsigned)postSamples,
@@ -1064,7 +1163,8 @@ static void handleUploadOptions(void)
   sendCorsHeaders();
   s_server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Cookie");
   s_server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  s_server.send(204);
+  s_server.sendHeader("Connection", "close");
+  s_server.send(200, "text/plain", "OK");
 }
 
 static String spiffsUploadPath(const String &uploadName)
@@ -1252,7 +1352,7 @@ static void handleApiBattery(void)
   const float highV = cfg.alarmHighCellVoltage / 1000.0f;
   const float lowV = cfg.alarmLowCellVoltage / 1000.0f;
   const float tempC = (float)ntcTemperatureC_x10[0] / 10.0f;
-  const float currentA = (float)packCurrentA_x10 / 10.0f;
+  const float currentA = modbusHasCurrentSensor() ? ((float)packCurrentA_x10 / 10.0f) : 0.0f;
 
   static char json[4096];
   int off = 0;

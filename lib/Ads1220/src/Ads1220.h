@@ -42,6 +42,8 @@ int32_t Ads1220_readAveragedRawOnChannel(uint8_t ainIndex, uint8_t samples, uint
 
 /** 평균 샘플 후 전압(V)까지 한 번에. PGA 1, 보드 분압·오프셋은 라이브러리 상수 사용. */
 float Ads1220_readAveragedVoltageOnChannel(uint8_t ainIndex, uint8_t samples, uint32_t timeoutMsPerSample, uint32_t interSampleDelayUs = 0);
+void Ads1220_setVoltageCalibration(float gainRatio, float offsetVolts);
+void Ads1220_getVoltageCalibration(float *gainRatioOut, float *offsetVoltsOut);
 
 #define ADS1220_AIN_VOLTAGE 0u
 #define ADS1220_AIN_CURRENT 2u

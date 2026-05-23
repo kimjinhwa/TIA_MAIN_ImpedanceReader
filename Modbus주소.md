@@ -16,13 +16,13 @@
 | 0 | Modbus 주소 | 1~247 |
 | 1 | 설치 셀 수 (InstalledCells) | 개 |
 | 2 | 기준전압 (Max1161_RefVolt) | mV |
-| 3 | 셀 게인 (Max1161_CellGain) | - |
-| 4 | 셀 오프셋 (Max1161_CellOffset) | - |
+| 3 | 셀 게인 (Max1161_CellGain) | `VOLTAGE_GAIN_RATIO` ×1000 (예: 7.506 → 7506) |
+| 4 | 셀 오프셋 (Max1161_CellOffset) | `VOLTAGE_OFFSET` mV (예: 0.356V → 356) |
 | 5 | 펌웨어 메이저 버전 | - |
 | 6 | 펌웨어 마이너 버전 | - |
 | 7 | 펌웨어 패치 버전 | - |
 | 8 | 오픈와이어 상태 (openWireStatus) | - |
-| 9 | 홀 CT 사용 (UseHoleCT) | 0/1 또는 CT Ratio |
+| 9 | 홀 CT 사용 (UseHoleCT) | 0=센서 없음(전류 0 반환), 그 외 CT 정격전류(A) |
 | 10 | 온도 오프셋 (TempOffset) | - |
 | 11 | 전류 오프셋 (AmpereOffset) | - |
 | 12 | 전류 게인 (AmpereGain) | - |
@@ -117,9 +117,9 @@ stateDiagram-v2
 | 0 | Modbus 주소 | 변경 시 재부팅 |
 | 1 | 설치 셀 수 (InstalledCells) | - |
 | 2 | 기준전압 (Max1161_RefVolt) | mV, VREF 자동 반영 |
-| 3 | 셀 게인 (Max1161_CellGain) | - |
-| 4 | 셀 오프셋 (Max1161_CellOffset) | - |
-| 9 | 홀 CT 사용 (UseHoleCT) | CT Ratio |
+| 3 | 셀 게인 (Max1161_CellGain) | `VOLTAGE_GAIN_RATIO` ×1000 |
+| 4 | 셀 오프셋 (Max1161_CellOffset) | `VOLTAGE_OFFSET` mV |
+| 9 | 홀 CT 사용 (UseHoleCT) | 0=센서 없음(전류 0 반환), 그 외 CT 정격전류(A) |
 | 10 | 온도 오프셋 (TempOffset) | - |
 | 11 | 전류 오프셋 (AmpereOffset) | - |
 | 12 | 전류 게인 (AmpereGain) | - |
