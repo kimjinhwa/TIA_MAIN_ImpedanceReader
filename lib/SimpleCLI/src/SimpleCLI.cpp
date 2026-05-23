@@ -257,8 +257,7 @@ void startbat_configCallback(cmd *cmdPtr)
   }
   startBatnumber =  argVal.toInt();
   systemDefaultValue.startBatnumber= startBatnumber;
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   simpleCli.outputStream->printf("\nChanged Start Bat number %d", startBatnumber );
 }
@@ -273,8 +272,7 @@ void batnumber_configCallback(cmd *cmdPtr)
     return;
   }
   systemDefaultValue.installed_cells = argVal.toInt();
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   simpleCli.outputStream->printf("\nChanged EEPROM installed Bat number %d", systemDefaultValue.installed_cells);
   esp_restart();
@@ -354,8 +352,7 @@ void offset_configCallback(cmd *cmdPtr)
         systemDefaultValue.impendanceCompensation[i] += value;
         cellvalue[i].impendance = cellvalue[i].impendance + systemDefaultValue.impendanceCompensation[i] / 100.f;
         simpleCli.outputStream->printf("\ncompansation %d IMP: %3.2f", systemDefaultValue.impendanceCompensation[i], cellvalue[i].impendance);
-        eepromNvsWriteBlock(&systemDefaultValue);
-        EEPROM.commit();
+        (void)readnWriteEEProm(true);
         EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
       }
       printCompensationValue();
@@ -368,8 +365,7 @@ void offset_configCallback(cmd *cmdPtr)
     }
     systemDefaultValue.impendanceCompensation[number - 1] += value;
     cellvalue[number-1].impendance = cellvalue[number-1].impendance + systemDefaultValue.impendanceCompensation[number-1] / 100.f;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nWrite Ok to IMP EEPROM %d : %d", number, systemDefaultValue.impendanceCompensation[number - 1]);
   }
@@ -393,8 +389,7 @@ void offset_configCallback(cmd *cmdPtr)
         simpleCli.outputStream->printf("\ncompansation %d ", systemDefaultValue.voltageCompensation[i]);
       }
       cellvalue[number-1].voltage= cellvalue[number-1].voltage+ systemDefaultValue.voltageCompensation[number-1] ;
-      eepromNvsWriteBlock(&systemDefaultValue);
-      EEPROM.commit();
+      (void)readnWriteEEProm(true);
       EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
       printCompensationValue();
       return;
@@ -406,8 +401,7 @@ void offset_configCallback(cmd *cmdPtr)
     }
     systemDefaultValue.voltageCompensation[number - 1] += value;
     cellvalue[number-1].voltage= cellvalue[number-1].voltage+ systemDefaultValue.voltageCompensation[number-1] ;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nWrite Ok to VOL EEPROM %d : %d", number, systemDefaultValue.voltageCompensation[number - 1]);
     printCompensationValue();
@@ -434,8 +428,7 @@ void offset_configCallback(cmd *cmdPtr)
         systemDefaultValue.impendanceCompensation[i] = value;
         cellvalue[i].impendance = cellvalue[i].impendance + systemDefaultValue.impendanceCompensation[i] / 100.f;
         simpleCli.outputStream->printf("\ncompansation %d IMP: %3.2f", systemDefaultValue.impendanceCompensation[i], cellvalue[i].impendance);
-        eepromNvsWriteBlock(&systemDefaultValue);
-        EEPROM.commit();
+        (void)readnWriteEEProm(true);
         EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
       }
       printCompensationValue();
@@ -448,8 +441,7 @@ void offset_configCallback(cmd *cmdPtr)
     }
     systemDefaultValue.impendanceCompensation[number - 1] = value;
     cellvalue[number - 1].impendance = cellvalue[number - 1].impendance + systemDefaultValue.impendanceCompensation[number - 1] / 100.f;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nWrite Ok to IMP EEPROM %d : %d", number, systemDefaultValue.impendanceCompensation[number - 1]);
     printCompensationValue();
@@ -474,8 +466,7 @@ void offset_configCallback(cmd *cmdPtr)
         cellvalue[number - 1].voltage= cellvalue[number - 1].voltage+ systemDefaultValue.voltageCompensation[number - 1];
         simpleCli.outputStream->printf("\ncompansation %d ", systemDefaultValue.voltageCompensation[i]);
       }
-      eepromNvsWriteBlock(&systemDefaultValue);
-      EEPROM.commit();
+      (void)readnWriteEEProm(true);
       EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
       printCompensationValue();
       return;
@@ -486,8 +477,7 @@ void offset_configCallback(cmd *cmdPtr)
       return;
     }
     systemDefaultValue.voltageCompensation[number - 1] = value;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     cellvalue[number - 1].voltage= cellvalue[number - 1].voltage+ systemDefaultValue.voltageCompensation[number - 1];
     simpleCli.outputStream->printf("\nWrite Ok to VOL EEPROM %d : %d", number, systemDefaultValue.voltageCompensation[number - 1]);
@@ -521,8 +511,7 @@ void offset_configCallback(cmd *cmdPtr)
     simpleCli.outputStream->printf("\ngapVoltege %3.2f/0.005 = %d",gapVoltage, voloffset);
     //이미 offset이 적용되어 있는 값이므로 +=를 해준다.
     systemDefaultValue.voltageCompensation[number - 1] = voloffset;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nWrite Ok to VOL EEPROM %d : %d", number, systemDefaultValue.voltageCompensation[number - 1]);
     printCompensationValue();
@@ -576,8 +565,7 @@ void calibration_configCallback(cmd *cmdPtr){
   if(argVal.equals("save")  ){
     systemDefaultValue.image_Cal = image;
     systemDefaultValue.real_Cal  = real;
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nEEPROM Real Image IMP:%6.2f\t %6.2f\t ",
       systemDefaultValue.real_Cal,systemDefaultValue.image_Cal);
@@ -596,8 +584,7 @@ void id_configCallback(cmd *cmdPtr){
   }
   (void)argVal;
   systemDefaultValue.modbusId = hwId;
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   simpleCli.outputStream->printf("\r\nmodbus id synced to HW address: %d", hwId);
 }
@@ -636,8 +623,7 @@ void loglevel_configCallback(cmd *cmdPtr)
     ESP_LOG_VERBOSE;
     break;
   }
-  eepromNvsWriteBlock(&systemDefaultValue);
-  EEPROM.commit();
+  (void)readnWriteEEProm(true);
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   simpleCli.outputStream->printf("\r\nLoglevel Changed %d", systemDefaultValue.logLevel);
   esp_log_level_set("*",level);
@@ -658,8 +644,7 @@ void mode_configCallback(cmd *cmdPtr){
   int8_t mode = argVal.toInt(); 
   if(mode == 0 || mode == 1 || mode == 2 || mode == 3 || mode == 4){
     systemDefaultValue.runMode = mode; 
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
+    (void)readnWriteEEProm(true);
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\r\nmode Changed %d",systemDefaultValue.runMode );
   }
