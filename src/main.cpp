@@ -33,19 +33,19 @@
 #include <esp_task_wdt.h>
 #include <esp_log.h>
 
-#define MAIN_POWEROFF HIGH
-#define MAIN_POWERON LOW 
-#define WDT_TIMEOUT 100 
-#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600
-#define IMP_EEPROM_CHANGE_DEFAULT_PERCENT 3u
-#define IMP_READ_MAX_DEFAULT 60u
-#define IMP_READ_MAX_MAX 120u
-#define IMP_STABLE_WINDOW_DEFAULT 5u
-#define IMP_STABLE_WINDOW_MAX 20u
-#define IMP_STABLE_REL_TOL_DEFAULT_PERCENT 3u
-#define IMP_POST_STABLE_SAMPLES_DEFAULT 5u
-#define IMP_POST_STABLE_SAMPLES_MAX 20u
-#define IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI 50u
+#define MAIN_POWEROFF HIGH                       // 메인 전원 OFF 제어 레벨
+#define MAIN_POWERON LOW                         // 메인 전원 ON 제어 레벨
+#define WDT_TIMEOUT 100                          // Task Watchdog 타임아웃(초)
+#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600      // 내부저항 기본 측정 주기(초)
+#define IMP_EEPROM_CHANGE_DEFAULT_PERCENT 3u     // 내부저항 EEPROM 갱신 기본 임계치(%)
+#define IMP_READ_MAX_DEFAULT 60u                 // 내부저항 측정 기본 최대 샘플 수
+#define IMP_READ_MAX_MAX 120u                    // 내부저항 측정 최대 샘플 상한
+#define IMP_STABLE_WINDOW_DEFAULT 5u             // 내부저항 안정 판정 기본 윈도우 크기
+#define IMP_STABLE_WINDOW_MAX 20u                // 내부저항 안정 판정 윈도우 상한
+#define IMP_STABLE_REL_TOL_DEFAULT_PERCENT 3u    // 내부저항 안정 판정 기본 상대 허용치(%)
+#define IMP_POST_STABLE_SAMPLES_DEFAULT 5u       // 안정 판정 후 기본 추가 평균 샘플 수
+#define IMP_POST_STABLE_SAMPLES_MAX 20u          // 안정 판정 후 추가 샘플 상한
+#define IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI 50u  // 유효 내부저항 최소값 기본치(0.1mOhm 단위, 50=5.0mOhm)
 // 기본 vSPI와 일치한다
 #define VSPI_MISO   MISO  // IO19
 #define VSPI_MOSI   MOSI  // IO 23
@@ -260,7 +260,7 @@ static bool startApOnly(void)
   }
 
   String apSsid = "POSCOIMP_";
-  apSsid += get485Address();
+  apSsid += systemDefaultValue.modbusId;
   const bool ok = WiFi.softAP(apSsid.c_str(), kApPassword);
   if (ok) {
     ESP_LOGI(TAG, "WiFi AP started: SSID=%s  IP=%s",
@@ -300,7 +300,6 @@ bool readnWriteEEProm(bool writeMode)
   if (writeMode)
   {
     eepromNvsWriteBlock(&systemDefaultValue);
-    modbusSaveCalibToEeprom();
     const bool saved = EEPROM.commit();
     if (saved)
       EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
@@ -342,6 +341,11 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.VoltageFactor = IMP_STABLE_REL_TOL_DEFAULT_PERCENT;   /* 안정 판단 허용치(%) */
     systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;  /* 안정 후 추가 샘플 수 */
     systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;  /* 최소 유효 mOhm (x10) */
+    systemDefaultValue.useHoleCt = 200u;   /* reg9 */
+    systemDefaultValue.ampereOffset = 0;   /* reg11 */
+    systemDefaultValue.ampereGain = 1000u; /* reg12 */
+    systemDefaultValue.cellGain = 7506u;   /* reg3 */
+    systemDefaultValue.cellOffset = 356;   /* reg4 */
     eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
   }
@@ -362,16 +366,32 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;
   if (systemDefaultValue.RcalLoopCount == 0 || systemDefaultValue.RcalLoopCount > 10000)
     systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;
+  if (systemDefaultValue.ampereGain == 0)
+    systemDefaultValue.ampereGain = 1000u;
+  if (systemDefaultValue.cellGain == 0)
+    systemDefaultValue.cellGain = 7506u;
   if(systemDefaultValue.startBatnumber > systemDefaultValue.installed_cells  )
     systemDefaultValue.startBatnumber = systemDefaultValue.installed_cells;
-  if(systemDefaultValue.startBatnumber == 0) 
-  startBatnumber = 1;
+  if(systemDefaultValue.startBatnumber == 0)
+    startBatnumber = 1;
+  modbusSetUseHoleCt(systemDefaultValue.useHoleCt);
+  modbusSetAmpereOffset(systemDefaultValue.ampereOffset);
+  modbusSetAmpereGain(systemDefaultValue.ampereGain);
+  modbusSetCellGain(systemDefaultValue.cellGain);
+  modbusSetCellOffset(systemDefaultValue.cellOffset);
   ESP_LOGI(TAG, "Installed cells: %d", systemDefaultValue.installed_cells);
   ESP_LOGI(TAG, "Start bat number: %d", systemDefaultValue.startBatnumber);
   ESP_LOGI(TAG, "SSID: %s", systemDefaultValue.ssid);
   ESP_LOGI(TAG, "SSID password: %s", systemDefaultValue.ssid_password);
   ESP_LOGI(TAG, "Run mode: %d", systemDefaultValue.runMode);
-  ESP_LOGI(TAG, "Modbus ID: %d", systemDefaultValue.modbusId);
+  const uint8_t hwId = get485Address();
+  if (systemDefaultValue.modbusId != hwId)
+  {
+    systemDefaultValue.modbusId = hwId;
+    eepromNvsWriteBlock(&systemDefaultValue);
+    EEPROM.commit();
+  }
+  ESP_LOGI(TAG, "Modbus ID: %d (HW:%d)", systemDefaultValue.modbusId, hwId);
   ESP_LOGI(TAG, "Impedance EEPROM change percent: %u%%", (unsigned)systemDefaultValue.ImpedanceFactor);
   ESP_LOGI(TAG, "Impedance read max: %u", (unsigned)systemDefaultValue.ACVoltPP);
   ESP_LOGI(TAG, "Impedance stable window: %u", (unsigned)systemDefaultValue.DCVolt);
@@ -382,14 +402,13 @@ bool readnWriteEEProm(bool writeMode)
   ESP_LOGI(TAG, "Real calibration: %f", systemDefaultValue.real_Cal);
   ESP_LOGI(TAG, "Image calibration: %f", systemDefaultValue.image_Cal);
   ESP_LOGI(TAG, "Log level: %d", systemDefaultValue.logLevel);
-  modbusLoadCalibFromEeprom();
   dataSyncUnlockSystemConfig();
   return true;
 }
 
 void setupModbusAgentForexternal485(){
   //address는 항상 1이다.
-  uint8_t address_485 = get485Address();
+  uint8_t address_485 = systemDefaultValue.modbusId;
   ESP_LOGI(TAG, "Address_485: %d", address_485);
   //external485.useStopControll =0;
   Serial1.begin(9600, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);

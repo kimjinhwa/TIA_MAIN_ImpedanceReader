@@ -32,8 +32,6 @@ void modbusSetAmpereOffset(int16_t value);
 void modbusSetAmpereGain(uint16_t value);
 void modbusSetCellGain(uint16_t value);
 void modbusSetCellOffset(int16_t value);
-void modbusLoadCalibFromEeprom(void);
-void modbusSaveCalibToEeprom(void);
 
 void setErrorMessageToModbus(bool setError, const char *msg);
 

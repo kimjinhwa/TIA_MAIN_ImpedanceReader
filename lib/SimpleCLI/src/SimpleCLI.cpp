@@ -23,6 +23,7 @@ extern bool btLogMirrorIsEnabled(void);
 extern void btLogMirrorSetEnabled(bool enabled);
 extern bool espLogIsEnabled(void);
 extern void espLogSetEnabled(bool enabled);
+extern uint8_t get485Address(void);
 
 static char TAG[] ="CLI" ;
 extern "C" {
@@ -588,19 +589,17 @@ void id_configCallback(cmd *cmdPtr){
   Command cmd(cmdPtr);
   Argument arg = cmd.getArgument(0);
   String argVal = arg.getValue();
+  const uint8_t hwId = get485Address();
   if (argVal.length() == 0){
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-    simpleCli.outputStream->printf("\r\nmode id is  %d",systemDefaultValue.modbusId);
+    simpleCli.outputStream->printf("\r\nmode id(HW) is %d", hwId);
     return;
   }
-  int8_t mod_id = argVal.toInt(); 
-  if(mod_id > 0 && mod_id <= 247){
-    systemDefaultValue.modbusId= mod_id; 
-    eepromNvsWriteBlock(&systemDefaultValue);
-    EEPROM.commit();
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-    simpleCli.outputStream->printf("\r\nmodbus is Changed to %d",systemDefaultValue.modbusId);
-  }
+  (void)argVal;
+  systemDefaultValue.modbusId = hwId;
+  eepromNvsWriteBlock(&systemDefaultValue);
+  EEPROM.commit();
+  EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+  simpleCli.outputStream->printf("\r\nmodbus id synced to HW address: %d", hwId);
 }
 void loglevel_configCallback(cmd *cmdPtr)
 {

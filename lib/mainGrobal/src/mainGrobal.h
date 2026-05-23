@@ -83,6 +83,11 @@ typedef struct
     uint8_t VoltageFactor;
     uint8_t TemperatureFactor;
     uint16_t ImpedanceMeasurePeriod; /* 초, 0=기본 3600(1시간) */
+    uint16_t useHoleCt; /* FC03/FC06 reg 9: 0=센서없음, 그 외 CT 정격(A) */
+    int16_t ampereOffset; /* FC03/FC06 reg 11: 전류 오프셋(0.1A 단위) */
+    uint16_t ampereGain; /* FC03/FC06 reg 12: 전류 게인(1000=1.000배) */
+    uint16_t cellGain; /* FC03/FC06 reg 3: VOLTAGE_GAIN_RATIO x1000 */
+    int16_t cellOffset; /* FC03/FC06 reg 4: VOLTAGE_OFFSET mV */
     uint16_t year;
     uint16_t month;
     uint16_t day;
@@ -100,8 +105,7 @@ extern nvsSystemSet systemDefaultValue;
 #define EEPROM_NV_MAGIC_HEAD 0x55u
 #define EEPROM_NV_MAGIC_TAIL 0xAAu
 #define EEPROM_NV_TAIL_BYTE_OFFSET (1u + sizeof(nvsSystemSet))
-#define EEPROM_MODBUS_CAL_BYTES    12u
-#define EEPROM_NV_RESERVED_BYTES   (2u + sizeof(nvsSystemSet) + EEPROM_MODBUS_CAL_BYTES)
+#define EEPROM_NV_RESERVED_BYTES   (2u + sizeof(nvsSystemSet))
 
 typedef struct {
   time_t readTime; // 4byte

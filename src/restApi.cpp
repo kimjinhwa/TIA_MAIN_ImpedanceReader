@@ -35,7 +35,6 @@ static void jsonAppendEscaped(char *dst, size_t cap, size_t *off, const char *te
 
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern nvsSystemSet systemDefaultValue;
-extern uint8_t get485Address(void);
 extern LittleFileSystem lsFile;
 
 #define SESSION_COOKIE_NAME "session"
@@ -1338,7 +1337,7 @@ static void handleApiBattery(void)
 
   const uint16_t nCells = apiInstalledCells(&cfg);
   const bool ok = apiDeviceHasValidCells(snapCells, nCells);
-  const unsigned devAddr = (unsigned)get485Address();
+  const unsigned devAddr = (unsigned)cfg.modbusId;
 
   uint16_t samples[REST_API_DATA_SLOTS] = {0};
   for (uint16_t i = 0; i < nCells; i++)

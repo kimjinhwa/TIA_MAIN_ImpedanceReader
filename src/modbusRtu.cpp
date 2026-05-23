@@ -8,76 +8,67 @@
 #include "../Version.h"
 #include <ModbusClientRTU.h>
 
+extern uint8_t get485Address(void);
+
 char strErrorMessage[40];
 
 uint16_t modbusReg50BaseImpProgress = 0;
 
 /** Modbus주소.md — FC04 최대 셀 수 */
-#define MODBUS_MAX_CELLS 16u
-#define MODBUS_REG_BASE_IMP_PROGRESS 50u
-#define MODBUS_REG_IMP_READ_MAX 15u
-#define MODBUS_REG_IMP_STABLE_WINDOW 16u
-#define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u
-#define MODBUS_REG_IMP_PERIOD_SEC 18u
-#define MODBUS_IMP_READ_MAX_DEFAULT 60u
-#define MODBUS_IMP_READ_MAX_MAX 120u
-#define MODBUS_IMP_STABLE_WINDOW_DEFAULT 5u
-#define MODBUS_IMP_STABLE_WINDOW_MAX 20u
-#define MODBUS_CAL_EEPROM_MAGIC_V1 0x4D43u
-#define MODBUS_CAL_EEPROM_MAGIC 0x4D44u
-
-/** FC03/FC06 보정·설정 (EEPROM nvsSystemSet에 없는 항목은 RAM, 재부팅 시 기본값). */
+#define MODBUS_MAX_CELLS 16u                      // FC04에서 처리하는 최대 셀 수
+#define MODBUS_REG_BASE_IMP_PROGRESS 50u          // FC03/FC06: 기준 내부저항 스캔 진행 상태 레지스터
+#define MODBUS_REG_IMP_READ_MAX 15u               // FC03/FC06: 내부저항 최대 읽기 횟수 레지스터
+#define MODBUS_REG_IMP_STABLE_WINDOW 16u          // FC03/FC06: 내부저항 안정 판단 윈도우 레지스터
+#define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u  // FC03/FC06: EEPROM 갱신 임계치(%) 레지스터
+#define MODBUS_REG_IMP_PERIOD_SEC 18u             // FC03/FC06: 내부저항 측정 주기(초) 레지스터
+#define MODBUS_IMP_READ_MAX_DEFAULT 60u           // 내부저항 최대 읽기 횟수 기본값
+#define MODBUS_IMP_READ_MAX_MAX 120u              // 내부저항 최대 읽기 횟수 상한
+#define MODBUS_IMP_STABLE_WINDOW_DEFAULT 5u       // 내부저항 안정 판단 윈도우 기본값
+#define MODBUS_IMP_STABLE_WINDOW_MAX 20u          // 내부저항 안정 판단 윈도우 상한
+/** FC03/FC06 보정·설정 (저장 대상은 systemDefaultValue, 나머지는 런타임 값). */
 static struct
 {
   uint16_t refVoltMv;
-  uint16_t cellGain;
-  int16_t cellOffset;
-  uint16_t useHoleCt;
   int16_t tempOffset;
-  int16_t ampereOffset;
-  uint16_t ampereGain;
   int16_t totalVoltageOffset;
   uint16_t totalVoltageGain;
-} s_modbusCalib = {
-    2048u,
-    7506u,
-    356,
-    200u,
-    0,
-    0,
-    1000u,
-    0,
-    1000u,
+} s_modbusRuntime = {
+    2048u,  // refVoltMv
+    0,      // tempOffset
+    0,      // totalVoltageOffset
+    1000u,  // totalVoltageGain (1.000배)
 };
 
-typedef struct
+static uint16_t modbusUseHoleCt(void)
 {
-  uint16_t magic;
-  uint16_t useHoleCt;
-  int16_t ampereOffset;
-  uint16_t ampereGain;
-  uint16_t cellGain;
-  int16_t cellOffset;
-} ModbusCalibEeprom;
-typedef struct
-{
-  uint16_t magic;
-  uint16_t useHoleCt;
-  int16_t ampereOffset;
-  uint16_t ampereGain;
-} ModbusCalibEepromV1;
+  return systemDefaultValue.useHoleCt;
+}
 
-
-static size_t modbusCalibEepromOffset(void)
+static int16_t modbusAmpereOffset(void)
 {
-  return (size_t)EEPROM_NV_TAIL_BYTE_OFFSET + 1u;
+  return systemDefaultValue.ampereOffset;
+}
+
+static uint16_t modbusAmpereGain(void)
+{
+  return systemDefaultValue.ampereGain == 0u ? 1000u : systemDefaultValue.ampereGain;
+}
+
+static uint16_t modbusCellGain(void)
+{
+  return systemDefaultValue.cellGain == 0u ? 7506u : systemDefaultValue.cellGain;
+}
+
+static int16_t modbusCellOffset(void)
+{
+  return systemDefaultValue.cellOffset;
 }
 
 static void modbusSyncCtRatedAmpsFromReg(void)
 {
   Ads1220CtScale scale;
   Ads1220_getCtScale(&scale);
-  scale.ctRatedAmps = (float)s_modbusCalib.useHoleCt;
+  scale.ctRatedAmps = (float)modbusUseHoleCt();
   if (scale.ctRatedAmps <= 0.0f)
     scale.ctRatedAmps = ADS1220_CT_RATED_AMPS_DEFAULT;
   scale.gain = 1.0f;
@@ -86,14 +77,14 @@ static void modbusSyncCtRatedAmpsFromReg(void)
 
 static void modbusSyncVoltageCalibFromReg(void)
 {
-  const float gainRatio = (float)s_modbusCalib.cellGain / 1000.0f;
-  const float offsetVolts = (float)s_modbusCalib.cellOffset / 1000.0f;
+  const float gainRatio = (float)modbusCellGain() / 1000.0f;
+  const float offsetVolts = (float)modbusCellOffset() / 1000.0f;
   Ads1220_setVoltageCalibration(gainRatio, offsetVolts);
 }
 
 static bool modbusCurrentSensorEnabled(void)
 {
-  return s_modbusCalib.useHoleCt != 0u;
+  return modbusUseHoleCt() != 0u;
 }
 
 static void modbusParseFirmwareVersion(uint16_t *major, uint16_t *minor, uint16_t *patch)
@@ -184,7 +175,7 @@ static uint16_t modbusPackTotalVoltageMv(const _cell_value *cells)
     if (v > 0.0f)
       sum += (uint32_t)(v * 1000.0f + 0.5f);
   }
-  int32_t scaled = modbusScaleS16((int32_t)sum, s_modbusCalib.totalVoltageOffset, s_modbusCalib.totalVoltageGain);
+  int32_t scaled = modbusScaleS16((int32_t)sum, s_modbusRuntime.totalVoltageOffset, s_modbusRuntime.totalVoltageGain);
   if (scaled < 0)
     scaled = 0;
   if (scaled > 65535)
@@ -205,21 +196,21 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
 
   reg[0] = (uint16_t)systemDefaultValue.modbusId;
   reg[1] = modbusInstalledCells();
-  reg[2] = s_modbusCalib.refVoltMv;
-  reg[3] = s_modbusCalib.cellGain;
-  reg[4] = (uint16_t)(int16_t)s_modbusCalib.cellOffset;
+  reg[2] = s_modbusRuntime.refVoltMv;
+  reg[3] = modbusCellGain();
+  reg[4] = (uint16_t)(int16_t)modbusCellOffset();
   reg[5] = maj;
   reg[6] = min;
   reg[7] = pat;
   _cell_value snap[MAX_INSTALLED_CELLS] = {0};
   dataSyncReadCellSnapshot(snap, MAX_INSTALLED_CELLS);
   reg[8] = modbusOpenWireStatus(snap);
-  reg[9] = s_modbusCalib.useHoleCt;
-  reg[10] = (uint16_t)(int16_t)s_modbusCalib.tempOffset;
-  reg[11] = (uint16_t)(int16_t)s_modbusCalib.ampereOffset;
-  reg[12] = s_modbusCalib.ampereGain;
-  reg[13] = (uint16_t)(int16_t)s_modbusCalib.totalVoltageOffset;
-  reg[14] = s_modbusCalib.totalVoltageGain;
+  reg[9] = modbusUseHoleCt();
+  reg[10] = (uint16_t)(int16_t)s_modbusRuntime.tempOffset;
+  reg[11] = (uint16_t)(int16_t)modbusAmpereOffset();
+  reg[12] = modbusAmpereGain();
+  reg[13] = (uint16_t)(int16_t)s_modbusRuntime.totalVoltageOffset;
+  reg[14] = s_modbusRuntime.totalVoltageGain;
   reg[MODBUS_REG_IMP_READ_MAX] = modbusSanitizeImpReadMax(systemDefaultValue.ACVoltPP);
   reg[MODBUS_REG_IMP_STABLE_WINDOW] = modbusSanitizeImpStableWindow(systemDefaultValue.DCVolt, reg[MODBUS_REG_IMP_READ_MAX]);
   reg[MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT] = (uint16_t)constrain((int)systemDefaultValue.ImpedanceFactor, 1, 100);
@@ -256,7 +247,7 @@ static void modbusFillFc04Input(uint16_t *reg, unsigned count)
 
   for (int t = 0; t < 2; t++)
   {
-    int32_t tx10 = modbusScaleS16(ntcTemperatureC_x10[t], s_modbusCalib.tempOffset, 1000);
+    int32_t tx10 = modbusScaleS16(ntcTemperatureC_x10[t], s_modbusRuntime.tempOffset, 1000);
     if (tx10 < -32768)
       tx10 = -32768;
     if (tx10 > 32767)
@@ -267,7 +258,7 @@ static void modbusFillFc04Input(uint16_t *reg, unsigned count)
   {
     int32_t ax10 = 0;
     if (modbusCurrentSensorEnabled())
-      ax10 = modbusScaleS16(packCurrentA_x10, s_modbusCalib.ampereOffset, s_modbusCalib.ampereGain);
+      ax10 = modbusScaleS16(packCurrentA_x10, modbusAmpereOffset(), modbusAmpereGain());
     if (ax10 < -32768)
       ax10 = -32768;
     if (ax10 > 32767)
@@ -342,11 +333,8 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
   switch (addr)
   {
   case 0:
-    if (value < 1 || value > 247)
-      return false;
-    systemDefaultValue.modbusId = (uint8_t)value;
-    if (needReboot)
-      *needReboot = true;
+    (void)value;
+    systemDefaultValue.modbusId = get485Address();
     return true;
   case 1:
     if (value < 1 || value > MODBUS_MAX_CELLS)
@@ -354,7 +342,7 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
     systemDefaultValue.installed_cells = value;
     return true;
   case 2:
-    s_modbusCalib.refVoltMv = value;
+    s_modbusRuntime.refVoltMv = value;
     return true;
   case 3:
     modbusSetCellGain(value);
@@ -363,27 +351,24 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
     modbusSetCellOffset((int16_t)value);
     return true;
   case 9:
-    s_modbusCalib.useHoleCt = value;
-    modbusSyncCtRatedAmpsFromReg();
+    modbusSetUseHoleCt(value);
     return true;
   case 10:
-    s_modbusCalib.tempOffset = (int16_t)value;
+    s_modbusRuntime.tempOffset = (int16_t)value;
     return true;
   case 11:
-    s_modbusCalib.ampereOffset = (int16_t)value;
+    modbusSetAmpereOffset((int16_t)value);
     return true;
   case 12:
-    if (value == 0)
-      value = 1000;
-    s_modbusCalib.ampereGain = value;
+    modbusSetAmpereGain(value);
     return true;
   case 13:
-    s_modbusCalib.totalVoltageOffset = (int16_t)value;
+    s_modbusRuntime.totalVoltageOffset = (int16_t)value;
     return true;
   case 14:
     if (value == 0)
       value = 1000;
-    s_modbusCalib.totalVoltageGain = value;
+    s_modbusRuntime.totalVoltageGain = value;
     return true;
   case MODBUS_REG_IMP_READ_MAX:
     if (value < 1 || value > MODBUS_IMP_READ_MAX_MAX)
@@ -475,96 +460,59 @@ bool modbusHasCurrentSensor(void)
 
 uint16_t modbusGetUseHoleCt(void)
 {
-  return s_modbusCalib.useHoleCt;
+  return modbusUseHoleCt();
 }
 
 int16_t modbusGetAmpereOffset(void)
 {
-  return s_modbusCalib.ampereOffset;
+  return modbusAmpereOffset();
 }
 
 uint16_t modbusGetAmpereGain(void)
 {
-  return s_modbusCalib.ampereGain;
+  return modbusAmpereGain();
 }
 
 uint16_t modbusGetCellGain(void)
 {
-  return s_modbusCalib.cellGain;
+  return modbusCellGain();
 }
 
 int16_t modbusGetCellOffset(void)
 {
-  return s_modbusCalib.cellOffset;
+  return modbusCellOffset();
 }
 
 void modbusSetUseHoleCt(uint16_t value)
 {
-  s_modbusCalib.useHoleCt = value;
+  systemDefaultValue.useHoleCt = value;
   modbusSyncCtRatedAmpsFromReg();
 }
 
 void modbusSetAmpereOffset(int16_t value)
 {
-  s_modbusCalib.ampereOffset = value;
+  systemDefaultValue.ampereOffset = value;
 }
 
 void modbusSetAmpereGain(uint16_t value)
 {
   if (value == 0u)
     value = 1000u;
-  s_modbusCalib.ampereGain = value;
+  systemDefaultValue.ampereGain = value;
 }
 
 void modbusSetCellGain(uint16_t value)
 {
   if (value == 0u)
-    value = 1u;
-  s_modbusCalib.cellGain = value;
+    value = 7506u;
+  systemDefaultValue.cellGain = value;
   modbusSyncVoltageCalibFromReg();
 }
 
 void modbusSetCellOffset(int16_t value)
 {
-  s_modbusCalib.cellOffset = value;
+  systemDefaultValue.cellOffset = value;
   modbusSyncVoltageCalibFromReg();
-}
-
-void modbusLoadCalibFromEeprom(void)
-{
-  const size_t off = modbusCalibEepromOffset();
-  ModbusCalibEeprom nv = {0};
-  EEPROM.readBytes((int)off, (uint8_t *)&nv, sizeof(nv));
-  if (nv.magic != MODBUS_CAL_EEPROM_MAGIC && nv.magic != MODBUS_CAL_EEPROM_MAGIC_V1)
-  {
-    modbusSyncCtRatedAmpsFromReg();
-    modbusSyncVoltageCalibFromReg();
-    return;
-  }
-
-  s_modbusCalib.useHoleCt = nv.useHoleCt;
-  s_modbusCalib.ampereOffset = nv.ampereOffset;
-  s_modbusCalib.ampereGain = (nv.ampereGain == 0u) ? 1000u : nv.ampereGain;
-  if (nv.magic == MODBUS_CAL_EEPROM_MAGIC)
-  {
-    s_modbusCalib.cellGain = (nv.cellGain == 0u) ? s_modbusCalib.cellGain : nv.cellGain;
-    s_modbusCalib.cellOffset = nv.cellOffset;
-  }
-  modbusSyncCtRatedAmpsFromReg();
-  modbusSyncVoltageCalibFromReg();
-}
-
-void modbusSaveCalibToEeprom(void)
-{
-  ModbusCalibEeprom nv;
-  nv.magic = MODBUS_CAL_EEPROM_MAGIC;
-  nv.useHoleCt = s_modbusCalib.useHoleCt;
-  nv.ampereOffset = s_modbusCalib.ampereOffset;
-  nv.ampereGain = (s_modbusCalib.ampereGain == 0u) ? 1000u : s_modbusCalib.ampereGain;
-  nv.cellGain = (s_modbusCalib.cellGain == 0u) ? 1u : s_modbusCalib.cellGain;
-  nv.cellOffset = s_modbusCalib.cellOffset;
-  const size_t off = modbusCalibEepromOffset();
-  EEPROM.writeBytes((int)off, (const uint8_t *)&nv, sizeof(nv));
 }
 
 ModbusMessage FC03(ModbusMessage request)
@@ -661,7 +609,9 @@ ModbusMessage FC06(ModbusMessage request)
       response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
       return response;
     }
-    if (writeAddress == 0 || writeAddress == 1 || (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC))
+    if (writeAddress == 0 || writeAddress == 1 ||
+        (writeAddress >= 2 && writeAddress <= 4) ||
+        (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC))
     {
       (void)readnWriteEEProm(true);
     }

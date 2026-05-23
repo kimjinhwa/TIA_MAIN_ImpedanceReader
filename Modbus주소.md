@@ -13,7 +13,7 @@
 
 | 주소 | 설명 | 단위/비고 |
 |------|------|-----------|
-| 0 | Modbus 주소 | 1~247 |
+| 0 | Modbus 주소 | **HW DIP(485 address) 기준** |
 | 1 | 설치 셀 수 (InstalledCells) | 개 |
 | 2 | 기준전압 (Max1161_RefVolt) | mV |
 | 3 | 셀 게인 (Max1161_CellGain) | `VOLTAGE_GAIN_RATIO` ×1000 (예: 7.506 → 7506) |
@@ -114,7 +114,7 @@ stateDiagram-v2
 
 | 주소 | 설명 | 비고 |
 |------|------|------|
-| 0 | Modbus 주소 | 변경 시 재부팅 |
+| 0 | Modbus 주소 | **HW DIP(485 address) 기준으로 동기화** |
 | 1 | 설치 셀 수 (InstalledCells) | - |
 | 2 | 기준전압 (Max1161_RefVolt) | mV, VREF 자동 반영 |
 | 3 | 셀 게인 (Max1161_CellGain) | `VOLTAGE_GAIN_RATIO` ×1000 |
