@@ -311,12 +311,6 @@ static ModbusMessage modbusReadRegisters(ModbusMessage request, uint8_t fc, uint
 
   uint16_t buf[256];
   memset(buf, 0, sizeof(buf));
-  if (fc == READ_HOLD_REGISTER)
-  {
-    dataSyncLockSystemConfig();
-    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
-    dataSyncUnlockSystemConfig();
-  }
   fill(buf, 256);
 
   response.add(request.getServerID(), fc, (uint8_t)(words * 2));
@@ -536,7 +530,7 @@ ModbusMessage FC01(ModbusMessage request)
   uint16_t writeAddress = (0xFFFF & address);
 
   response.add(request.getServerID(), request.getFunctionCode());
-  ESP_LOGI("MODBUS", "FC01 address(%u) quantity(%u)", writeAddress, quantity);
+  ESP_LOGD("MODBUS", "FC01 address(%u) quantity(%u)", writeAddress, quantity);
 
   if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
   {
@@ -592,7 +586,7 @@ ModbusMessage FC06(ModbusMessage request)
   response.add(request.getServerID(), request.getFunctionCode(), writeAddress);
   response.add(value);
 
-  ESP_LOGI("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
+  ESP_LOGD("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
 
   if (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC || writeAddress == MODBUS_REG_BASE_IMP_PROGRESS)
   {

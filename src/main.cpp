@@ -19,6 +19,7 @@
 #include "myBlueTooth.h"
 #include "NetworkTask.h"
 #include "ModbusClientRTU.h"
+#include "Logging.h"
 #include "modbusRtu.h"
 #include "batDeviceInterface.h"
 #include <Mcp23s08.h>
@@ -32,6 +33,7 @@
 // #include <esp_task.h>
 #include <esp_task_wdt.h>
 #include <esp_log.h>
+#include <esp_system.h>
 
 #define MAIN_POWEROFF HIGH                       // 메인 전원 OFF 제어 레벨
 #define MAIN_POWERON LOW                         // 메인 전원 ON 제어 레벨
@@ -65,6 +67,8 @@ static TaskHandle_t s_serviceTaskHandle = nullptr;
 TaskHandle_t *h_pxblueToothTask = nullptr;
 static volatile bool s_apRestartRequested = false;
 static bool s_wifiEventHandlerRegistered = false;
+static unsigned long s_lastApRestartMs = 0;
+static const unsigned long AP_RESTART_COOLDOWN_MS = 2000;
 nvsSystemSet systemDefaultValue;
 
 ModbusServerRTU external485(2000,EXT_485EN_1);
@@ -82,9 +86,6 @@ extern SimpleCLI simpleCli;
 uint16_t startBatnumber=1;
 
 BluetoothSerial SerialBT;
-using LogVprintfFn = int (*)(const char *, va_list);
-static LogVprintfFn s_prevLogVprintf = nullptr;
-static volatile bool s_btLogMirrorEnabled = false;
 static volatile bool s_espLogEnabled = true;
 static bool s_lastEspLogEnabledApplied = true;
 
@@ -98,47 +99,23 @@ float AD5940_readImpMagnitude(fImpCar_Type *pCarOut);
 void changeAD5940ToMeasurement(bool bChange);
 uint8_t get485Address();
 
-static int btMirrorVprintf(const char *fmt, va_list args)
+static const char *resetReasonToString(esp_reset_reason_t reason)
 {
-  if (!s_espLogEnabled)
-    return 0;
-
-  va_list copyForPrev;
-  va_copy(copyForPrev, args);
-  const int ret = s_prevLogVprintf ? s_prevLogVprintf(fmt, copyForPrev) : vprintf(fmt, copyForPrev);
-  va_end(copyForPrev);
-
-  if (s_btLogMirrorEnabled && SerialBT.connected() && fmt)
+  switch (reason)
   {
-    char line[256];
-    va_list copyForBt;
-    va_copy(copyForBt, args);
-    const int n = vsnprintf(line, sizeof(line), fmt, copyForBt);
-    va_end(copyForBt);
-    if (n > 0)
-    {
-      const size_t outLen = (size_t)((n < (int)(sizeof(line) - 1)) ? n : (int)(sizeof(line) - 1));
-      SerialBT.write((const uint8_t *)line, outLen);
-    }
+  case ESP_RST_UNKNOWN:   return "UNKNOWN";
+  case ESP_RST_POWERON:   return "POWERON";
+  case ESP_RST_EXT:       return "EXT";
+  case ESP_RST_SW:        return "SW";
+  case ESP_RST_PANIC:     return "PANIC";
+  case ESP_RST_INT_WDT:   return "INT_WDT";
+  case ESP_RST_TASK_WDT:  return "TASK_WDT";
+  case ESP_RST_WDT:       return "WDT";
+  case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+  case ESP_RST_BROWNOUT:  return "BROWNOUT";
+  case ESP_RST_SDIO:      return "SDIO";
+  default:                return "OTHER";
   }
-
-  return ret;
-}
-
-static void installBtLogMirror(void)
-{
-  if (!s_prevLogVprintf)
-    s_prevLogVprintf = esp_log_set_vprintf(btMirrorVprintf);
-}
-
-bool btLogMirrorIsEnabled(void)
-{
-  return s_btLogMirrorEnabled;
-}
-
-void btLogMirrorSetEnabled(bool enabled)
-{
-  s_btLogMirrorEnabled = enabled;
 }
 
 bool espLogIsEnabled(void)
@@ -277,8 +254,11 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
 #ifdef WIFI_AP_MODE
   if (event == ARDUINO_EVENT_WIFI_AP_STOP)
   {
-    s_apRestartRequested = true;
-    ESP_LOGW(TAG, "WiFi event: AP_STOP detected, restart requested");
+    if (!s_apRestartRequested)
+    {
+      s_apRestartRequested = true;
+      ESP_LOGW(TAG, "WiFi event: AP_STOP detected, restart requested");
+    }
   }
 #endif
 }
@@ -410,6 +390,8 @@ void setupModbusAgentForexternal485(){
   //address는 항상 1이다.
   uint8_t address_485 = systemDefaultValue.modbusId;
   ESP_LOGI(TAG, "Address_485: %d", address_485);
+  // eModbus 내부 LOGDEVICE(Serial) 출력 차단: 모드버스 고속 트래픽 시 UART0 출력 부담 제거
+  MBUlogLvl = LOG_LEVEL_NONE;
   //external485.useStopControll =0;
   Serial1.begin(9600, SERIAL_8N1, SERIAL_RX1, SERIAL_TX1);
   external485.begin(Serial1,9600,1,2000);
@@ -611,7 +593,12 @@ uint8_t get485Address()
 {
   int address1 = digitalRead(RS_485ADD1);
   int address2 = digitalRead(RS_485ADD2);
-  uint8_t address = address1 << 1 | address2;
+  uint8_t address = (uint8_t)(((address1 & 0x1) << 1) | (address2 & 0x1));
+  if (address == 0u)
+  {
+    ESP_LOGW(TAG, "Invalid 485 address(0) detected, fallback to 1");
+    address = 1u;
+  }
   return address;
 }
 /** MUX 안정화 후 ADS1220 단일 변환 전압(V). */
@@ -1059,8 +1046,8 @@ void setup()
 
   dataSyncInit();
   EEPROM.begin((unsigned)EEPROM_NV_RESERVED_BYTES);
-  (void)readnWriteEEProm(false);
   pinsetup();
+  (void)readnWriteEEProm(false);
   ntcTemperatureInit();
   ntcTemperatureUpdate();
   ctCurrentInit();
@@ -1072,7 +1059,13 @@ void setup()
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
 
-  String strResetReason = "System booting reason is  ";
+  const esp_reset_reason_t rr = esp_reset_reason();
+  String strResetReason = "ResetReason=";
+  strResetReason += resetReasonToString(rr);
+  strResetReason += " (";
+  strResetReason += (int)rr;
+  strResetReason += ")";
+  ESP_LOGW(TAG, "Boot reset reason: %s (%d)", resetReasonToString(rr), (int)rr);
   bool dataReload = false;
   Serial.println("Flash Memory Init....Waiting....");
   lsFile.littleFsInitFast(0);
@@ -1083,7 +1076,6 @@ void setup()
   bleName += "_";
   bleName += systemDefaultValue.modbusId;
   SerialBT.begin(bleName.c_str());
-  installBtLogMirror();
   Serial.printf("\nBluetooth Name : %s\n",bleName.c_str());
   wifiApmodeConfig();
   printWebLoginCredentials();
@@ -1298,10 +1290,13 @@ void loop(void)
 #ifdef WIFI_AP_MODE
   if (s_apRestartRequested)
   {
-    s_apRestartRequested = false;
-    ESP_LOGW(TAG, "WiFi AP restart by event");
-    WiFi.softAPdisconnect(true);
-    startApOnly();
+    if ((now - s_lastApRestartMs) >= AP_RESTART_COOLDOWN_MS)
+    {
+      s_apRestartRequested = false;
+      s_lastApRestartMs = now;
+      ESP_LOGW(TAG, "WiFi AP restart by event");
+      startApOnly();
+    }
   }
 
   if ((now - lastWifiWatchMs) >= WIFI_WATCH_INTERVAL_MS)
@@ -1312,10 +1307,13 @@ void loop(void)
     const bool apIpOk = (apIp[0] == 192 && apIp[1] == 168 && apIp[2] == 11 && apIp[3] == 1);
     if (!apModeOk || !apIpOk)
     {
-      ESP_LOGW(TAG, "WiFi AP watchdog recover (mode=%d ip=%s)",
-               (int)WiFi.getMode(), apIp.toString().c_str());
-      WiFi.softAPdisconnect(true);
-      startApOnly();
+      if ((now - s_lastApRestartMs) >= AP_RESTART_COOLDOWN_MS)
+      {
+        s_lastApRestartMs = now;
+        ESP_LOGW(TAG, "WiFi AP watchdog recover (mode=%d ip=%s)",
+                 (int)WiFi.getMode(), apIp.toString().c_str());
+        startApOnly();
+      }
     }
   }
 #endif
