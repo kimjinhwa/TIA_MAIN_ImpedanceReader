@@ -26,6 +26,7 @@
 #include "ntcTemperature.h"
 #include "ctCurrent.h"
 #include "restApi.h"
+#include "dataSync.h"
 
 // #include <esp_int_wdt.h>
 // #include <esp_task.h>
@@ -34,6 +35,16 @@
 #define MAIN_POWEROFF HIGH
 #define MAIN_POWERON LOW 
 #define WDT_TIMEOUT 100 
+#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600
+#define IMP_EEPROM_CHANGE_DEFAULT_PERCENT 3u
+#define IMP_READ_MAX_DEFAULT 60u
+#define IMP_READ_MAX_MAX 120u
+#define IMP_STABLE_WINDOW_DEFAULT 5u
+#define IMP_STABLE_WINDOW_MAX 20u
+#define IMP_STABLE_REL_TOL_DEFAULT_PERCENT 3u
+#define IMP_POST_STABLE_SAMPLES_DEFAULT 5u
+#define IMP_POST_STABLE_SAMPLES_MAX 20u
+#define IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI 50u
 // 기본 vSPI와 일치한다
 #define VSPI_MISO   MISO  // IO19
 #define VSPI_MOSI   MOSI  // IO 23
@@ -49,6 +60,7 @@ static char TAG[] ="Main";
 
 TaskHandle_t *h_pxblueToothTask;
 TaskHandle_t *h_pxNetworkTask;
+static TaskHandle_t s_webApiTaskHandle = nullptr;
 nvsSystemSet systemDefaultValue;
 
 ModbusServerRTU external485(2000,EXT_485EN_1);
@@ -111,6 +123,39 @@ void pinsetup()
 }
 void AD5940_Main(void *parameters);
 
+#ifdef WIFI_AP_MODE
+static void webApiTask(void *parameters)
+{
+  (void)parameters;
+  for (;;)
+  {
+    restApiHandle();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+#endif
+
+/** EEPROM 웹 로그인 계정 — Serial/로그 (Serial.begin 및 WiFi AP 이후 호출). */
+static void printWebLoginCredentials(void)
+{
+  ESP_LOGI(TAG, "===== Web login (EEPROM) =====");
+  ESP_LOGI(TAG, "  User ID      : %s", systemDefaultValue.userid);
+  ESP_LOGI(TAG, "  User password: %s", systemDefaultValue.userpassword);
+#ifdef WIFI_AP_MODE
+  ESP_LOGI(TAG, "  Web URL      : http://%s/login.html", WiFi.softAPIP().toString().c_str());
+#endif
+
+  Serial.println();
+  Serial.println("===== Web login (EEPROM) =====");
+  Serial.printf("  User ID      : %s\r\n", systemDefaultValue.userid);
+  Serial.printf("  User password: %s\r\n", systemDefaultValue.userpassword);
+#ifdef WIFI_AP_MODE
+  Serial.printf("  Web URL      : http://%s/login.html\r\n", WiFi.softAPIP().toString().c_str());
+#endif
+  Serial.println("================================");
+  Serial.println();
+}
+
 void wifiApmodeConfig()
 {
 #ifdef WIFI_AP_MODE
@@ -138,6 +183,7 @@ void wifiApmodeConfig()
 void readnWriteEEProm()
 {
   uint8_t ipaddr1;
+  dataSyncLockSystemConfig();
   if (!eepromNvsBlockLooksValid())
   {
     systemDefaultValue.runMode = 0;  // 0: manual 0x01 : onlyVoltate Audo, 0x03 : Voltage & Impedance 
@@ -166,10 +212,32 @@ void readnWriteEEProm()
     systemDefaultValue.logLevel = ESP_LOG_INFO;
     systemDefaultValue.startBatnumber = 1;
     systemDefaultValue.ImpedanceMeasurePeriod = 3600; /* 초, 0이면 런타임 기본 3600 */
+    systemDefaultValue.ImpedanceFactor = IMP_EEPROM_CHANGE_DEFAULT_PERCENT; /* EEPROM 저장 임계치(%) */
+    systemDefaultValue.ACVoltPP = IMP_READ_MAX_DEFAULT;                      /* 최대 읽기 횟수 */
+    systemDefaultValue.DCVolt = IMP_STABLE_WINDOW_DEFAULT;                   /* 안정 판단 윈도우 */
+    systemDefaultValue.VoltageFactor = IMP_STABLE_REL_TOL_DEFAULT_PERCENT;   /* 안정 판단 허용치(%) */
+    systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;  /* 안정 후 추가 샘플 수 */
+    systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;  /* 최소 유효 mOhm (x10) */
     eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
   }
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+  systemDefaultValue.userid[sizeof(systemDefaultValue.userid) - 1] = '\0';
+  systemDefaultValue.userpassword[sizeof(systemDefaultValue.userpassword) - 1] = '\0';
+  if (systemDefaultValue.ImpedanceMeasurePeriod == 0)
+    systemDefaultValue.ImpedanceMeasurePeriod = IMP_MEASURE_PERIOD_DEFAULT_SEC;
+  if (systemDefaultValue.ImpedanceFactor == 0 || systemDefaultValue.ImpedanceFactor > 100)
+    systemDefaultValue.ImpedanceFactor = IMP_EEPROM_CHANGE_DEFAULT_PERCENT;
+  if (systemDefaultValue.ACVoltPP == 0 || systemDefaultValue.ACVoltPP > IMP_READ_MAX_MAX)
+    systemDefaultValue.ACVoltPP = IMP_READ_MAX_DEFAULT;
+  if (systemDefaultValue.DCVolt == 0 || systemDefaultValue.DCVolt > IMP_STABLE_WINDOW_MAX)
+    systemDefaultValue.DCVolt = IMP_STABLE_WINDOW_DEFAULT;
+  if (systemDefaultValue.VoltageFactor == 0 || systemDefaultValue.VoltageFactor > 20)
+    systemDefaultValue.VoltageFactor = IMP_STABLE_REL_TOL_DEFAULT_PERCENT;
+  if (systemDefaultValue.TemperatureFactor == 0 || systemDefaultValue.TemperatureFactor > IMP_POST_STABLE_SAMPLES_MAX)
+    systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;
+  if (systemDefaultValue.RcalLoopCount == 0 || systemDefaultValue.RcalLoopCount > 10000)
+    systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;
   if(systemDefaultValue.startBatnumber > systemDefaultValue.installed_cells  )
     systemDefaultValue.startBatnumber = systemDefaultValue.installed_cells;
   if(systemDefaultValue.startBatnumber == 0) 
@@ -178,13 +246,19 @@ void readnWriteEEProm()
   ESP_LOGI(TAG, "Start bat number: %d", systemDefaultValue.startBatnumber);
   ESP_LOGI(TAG, "SSID: %s", systemDefaultValue.ssid);
   ESP_LOGI(TAG, "SSID password: %s", systemDefaultValue.ssid_password);
-  ESP_LOGI(TAG, "User ID: %s", systemDefaultValue.userid);
-  ESP_LOGI(TAG, "User password: %s", systemDefaultValue.userpassword);
   ESP_LOGI(TAG, "Run mode: %d", systemDefaultValue.runMode);
   ESP_LOGI(TAG, "Modbus ID: %d", systemDefaultValue.modbusId);
+  ESP_LOGI(TAG, "Impedance EEPROM change percent: %u%%", (unsigned)systemDefaultValue.ImpedanceFactor);
+  ESP_LOGI(TAG, "Impedance read max: %u", (unsigned)systemDefaultValue.ACVoltPP);
+  ESP_LOGI(TAG, "Impedance stable window: %u", (unsigned)systemDefaultValue.DCVolt);
+  ESP_LOGI(TAG, "Impedance measure period: %us", (unsigned)systemDefaultValue.ImpedanceMeasurePeriod);
+  ESP_LOGI(TAG, "Impedance stable tolerance: %u%%", (unsigned)systemDefaultValue.VoltageFactor);
+  ESP_LOGI(TAG, "Impedance post samples: %u", (unsigned)systemDefaultValue.TemperatureFactor);
+  ESP_LOGI(TAG, "Impedance min valid: %.1f mOhm", (float)systemDefaultValue.RcalLoopCount / 10.0f);
   ESP_LOGI(TAG, "Real calibration: %f", systemDefaultValue.real_Cal);
   ESP_LOGI(TAG, "Image calibration: %f", systemDefaultValue.image_Cal);
   ESP_LOGI(TAG, "Log level: %d", systemDefaultValue.logLevel);
+  dataSyncUnlockSystemConfig();
 }
 
 void setupModbusAgentForexternal485(){
@@ -272,15 +346,6 @@ void initCellValue()
 #define AD5940_SETTLE_AFTER_OFF_MS 150
 
 /** 임피던스: EEPROM ImpedanceMeasurePeriod(초), 0 → 기본 1시간. */
-#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600
-#define IMP_READ_MAX 60
-#define IMP_STABLE_WINDOW 5
-/** 3% 이내 5샘플 창 = 비충전·유효 Z. 그 외(충전 등)는 EEPROM 값 사용. */
-#define IMP_STABLE_REL_TOL 0.03f
-#define IMP_POST_STABLE_SAMPLES 5
-#define IMP_MAG_MIN_VALID_MOHM 5.0f
-/** EEPROM 갱신: 기존 대비 **5% 이상 변화**(증가·감소) 시만 (셀 교체·결선 수정 등 반영). */
-#define IMP_EEPROM_MIN_CHANGE_RATIO 0.05f
 
 /** 1: 3초마다 전압+임피던스 함께(충전 테스트). 0: 전압 3초 / 임피던스 주기 분리. */
 #define MEASURE_TEST_COMBINED_VZ 1
@@ -413,10 +478,66 @@ static float readCellVoltageOnce(void)
 
 static uint32_t impedanceMeasurePeriodMs(void)
 {
+  dataSyncLockSystemConfig();
   uint32_t sec = (uint32_t)systemDefaultValue.ImpedanceMeasurePeriod;
+  dataSyncUnlockSystemConfig();
   if (sec == 0)
     sec = IMP_MEASURE_PERIOD_DEFAULT_SEC;
   return sec * 1000UL;
+}
+
+static uint16_t impedanceReadMax(void)
+{
+  dataSyncLockSystemConfig();
+  uint16_t n = systemDefaultValue.ACVoltPP;
+  dataSyncUnlockSystemConfig();
+  if (n == 0 || n > IMP_READ_MAX_MAX)
+    n = (uint16_t)IMP_READ_MAX_DEFAULT;
+  return n;
+}
+
+static uint8_t impedanceStableWindow(uint16_t readMax)
+{
+  dataSyncLockSystemConfig();
+  uint16_t n = systemDefaultValue.DCVolt;
+  dataSyncUnlockSystemConfig();
+  if (n == 0 || n > IMP_STABLE_WINDOW_MAX)
+    n = (uint16_t)IMP_STABLE_WINDOW_DEFAULT;
+  if (n > readMax)
+    n = readMax;
+  if (n < 2)
+    n = 2;
+  return (uint8_t)n;
+}
+
+static float impedanceStableToleranceRatio(void)
+{
+  dataSyncLockSystemConfig();
+  uint8_t pct = systemDefaultValue.VoltageFactor;
+  dataSyncUnlockSystemConfig();
+  if (pct == 0 || pct > 20)
+    pct = (uint8_t)IMP_STABLE_REL_TOL_DEFAULT_PERCENT;
+  return (float)pct / 100.0f;
+}
+
+static uint8_t impedancePostStableSamples(void)
+{
+  dataSyncLockSystemConfig();
+  uint8_t n = systemDefaultValue.TemperatureFactor;
+  dataSyncUnlockSystemConfig();
+  if (n == 0 || n > IMP_POST_STABLE_SAMPLES_MAX)
+    n = (uint8_t)IMP_POST_STABLE_SAMPLES_DEFAULT;
+  return n;
+}
+
+static float impedanceMinValidMohm(void)
+{
+  dataSyncLockSystemConfig();
+  uint16_t deci = systemDefaultValue.RcalLoopCount;
+  dataSyncUnlockSystemConfig();
+  if (deci == 0 || deci > 10000)
+    deci = (uint16_t)IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;
+  return (float)deci / 10.0f;
 }
 
 static bool impSampleUsable(const fImpCar_Type *car)
@@ -424,7 +545,7 @@ static bool impSampleUsable(const fImpCar_Type *car)
   if (car == NULL)
     return false;
   const float mag = AD5940_ComplexMag((fImpCar_Type *)car);
-  return (car->Real > 0.0f) && (mag >= IMP_MAG_MIN_VALID_MOHM);
+  return (car->Real > 0.0f) && (mag >= impedanceMinValidMohm());
 }
 
 /** EEPROM baseImpendance[] 인코딩: mOhm × 100 (Modbus FC04 80~95). */
@@ -451,11 +572,14 @@ static void applyCellImpedanceFromEeprom(unsigned batNo)
   if (batNo < 1 || batNo > (int)nActive)
     return;
   const unsigned idx = (unsigned)(batNo - 1);
-  const float z = impEepromCentiToMohm(systemDefaultValue.baseImpendance[idx]);
+  dataSyncLockSystemConfig();
+  const int16_t baseCenti = systemDefaultValue.baseImpendance[idx];
+  dataSyncUnlockSystemConfig();
+  const float z = impEepromCentiToMohm(baseCenti);
   if (z <= 0.0f)
     return;
   cellvalue[idx].impendance = z;
-  cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
+  cellvalue[idx].baseImpendance = baseCenti;
 }
 
 static void applyAllCellImpedanceFromEeprom(void)
@@ -465,8 +589,8 @@ static void applyAllCellImpedanceFromEeprom(void)
     applyCellImpedanceFromEeprom((int)c);
 }
 
-/** oldC 대비 newC 변화량이 IMP_EEPROM_MIN_CHANGE_RATIO 이상인지 (정수 centi-mOhm). */
-static bool impEepromChangeEnough(int16_t oldC, int16_t newC)
+/** oldC 대비 newC 변화량이 EEPROM 설정(%) 이상인지 (정수 centi-mOhm). */
+static bool impEepromChangeEnough(int16_t oldC, int16_t newC, float minRatio)
 {
   if (oldC <= 0)
     return true;
@@ -474,33 +598,44 @@ static bool impEepromChangeEnough(int16_t oldC, int16_t newC)
     return false;
   const int64_t delta = (int64_t)newC - (int64_t)oldC;
   const int64_t absDelta = delta < 0 ? -delta : delta;
-  const int64_t minDelta = (int64_t)((float)oldC * IMP_EEPROM_MIN_CHANGE_RATIO + 0.5f);
+  const int64_t minDelta = (int64_t)((float)oldC * minRatio + 0.5f);
   return absDelta >= minDelta;
 }
 
-/** 유효 Z 측정 성공 시: 기존 EEPROM과 5% 이상 다를 때만 저장. */
+/** 유효 Z 측정 성공 시: 기존 EEPROM과 설정값(%) 이상 다를 때만 저장. */
 static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
 {
   const unsigned idx = (unsigned)(batNo - 1);
   const int16_t newC = impMohmToEepromCenti(z_mOhm);
+  dataSyncLockSystemConfig();
   const int16_t oldC = systemDefaultValue.baseImpendance[idx];
+  uint8_t minPctCfg = systemDefaultValue.ImpedanceFactor;
+  if (minPctCfg == 0 || minPctCfg > 100)
+    minPctCfg = (uint8_t)IMP_EEPROM_CHANGE_DEFAULT_PERCENT;
+  const float minRatio = (float)minPctCfg / 100.0f;
 
   if (newC <= 0)
+  {
+    dataSyncUnlockSystemConfig();
     return false;
+  }
 
-  if (oldC > 0 && !impEepromChangeEnough(oldC, newC))
+  if (oldC > 0 && !impEepromChangeEnough(oldC, newC, minRatio))
   {
     const float oldM = impEepromCentiToMohm(oldC);
     const float pct = oldM > 0.0f ? ((z_mOhm - oldM) / oldM) * 100.0f : 0.0f;
+    const float minPct = (float)minPctCfg;
     ESP_LOGI(TAG,
              "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
-             (unsigned)batNo, oldM, z_mOhm, pct, IMP_EEPROM_MIN_CHANGE_RATIO * 100.0f);
+             (unsigned)batNo, oldM, z_mOhm, pct, minPct);
+    dataSyncUnlockSystemConfig();
     return false;
   }
 
   systemDefaultValue.baseImpendance[idx] = newC;
   eepromNvsWriteBlock(&systemDefaultValue);
   EEPROM.commit();
+  dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
   ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
            (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
@@ -508,25 +643,27 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
 }
 
 /** 연속 5샘플 창 [startIdx .. startIdx+4]: 첫·끝 상대오차 + max-min. */
-static bool impWindowIsStable(fImpCar_Type *samples, int startIdx)
+static bool impWindowIsStable(fImpCar_Type *samples, int startIdx, uint8_t stableWindow)
 {
-  for (int k = 0; k < IMP_STABLE_WINDOW; k++)
+  const float minMag = impedanceMinValidMohm();
+  const float tolRatio = impedanceStableToleranceRatio();
+  for (uint8_t k = 0; k < stableWindow; k++)
   {
     if (!impSampleUsable(&samples[startIdx + k]))
       return false;
   }
 
   const float z0 = AD5940_ComplexMag(&samples[startIdx]);
-  const float z4 = AD5940_ComplexMag(&samples[startIdx + IMP_STABLE_WINDOW - 1]);
+  const float z4 = AD5940_ComplexMag(&samples[startIdx + stableWindow - 1]);
   const float denom = fmaxf(z0, z4);
-  if (denom < IMP_MAG_MIN_VALID_MOHM)
+  if (denom < minMag)
     return false;
-  if (fabsf(z4 - z0) / denom > IMP_STABLE_REL_TOL)
+  if (fabsf(z4 - z0) / denom > tolRatio)
     return false;
 
   float mn = z0;
   float mx = z0;
-  for (int k = 0; k < IMP_STABLE_WINDOW; k++)
+  for (uint8_t k = 0; k < stableWindow; k++)
   {
     const float z = AD5940_ComplexMag(&samples[startIdx + k]);
     if (z < mn)
@@ -534,7 +671,7 @@ static bool impWindowIsStable(fImpCar_Type *samples, int startIdx)
     if (z > mx)
       mx = z;
   }
-  return ((mx - mn) / denom) <= IMP_STABLE_REL_TOL;
+  return ((mx - mn) / denom) <= tolRatio;
 }
 
 /**
@@ -597,14 +734,18 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   delay(MUX_IMPEDANCE_SETTLE_MS);
   delay(AD5940_SETTLE_AFTER_OFF_MS);
 
+  fImpCar_Type samples[IMP_READ_MAX_MAX + IMP_POST_STABLE_SAMPLES_MAX];
+  int nSamples = 0;
+  const uint8_t postStableSamples = impedancePostStableSamples();
+  const uint16_t readMax = impedanceReadMax();
+  const uint8_t stableWindow = impedanceStableWindow(readMax);
+
 #if IMP_MONITOR_LOG_ALL
-  ESP_LOGI(TAG, "cell %u Z monitor start (max %d reads)", (unsigned)batNo, IMP_READ_MAX);
+  ESP_LOGI(TAG, "cell %u Z monitor start (max %u reads, window %u)",
+           (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
 #endif
 
-  fImpCar_Type samples[IMP_READ_MAX + IMP_POST_STABLE_SAMPLES];
-  int nSamples = 0;
-
-  for (int i = 0; i < IMP_READ_MAX; i++)
+  for (uint16_t i = 0; i < readMax; i++)
   {
     fImpCar_Type car;
     const float mag = AD5940_readImpMagnitude(&car);
@@ -622,15 +763,15 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     }
     samples[nSamples++] = car;
 
-    if (nSamples >= IMP_STABLE_WINDOW)
+    if (nSamples >= (int)stableWindow)
     {
-      const int winStart = nSamples - IMP_STABLE_WINDOW;
-      if (!impWindowIsStable(samples, winStart))
+      const int winStart = nSamples - (int)stableWindow;
+      if (!impWindowIsStable(samples, winStart, stableWindow))
         continue;
 
       float sum = 0.0f;
       int postCount = 0;
-      for (int p = 0; p < IMP_POST_STABLE_SAMPLES; p++)
+      for (uint8_t p = 0; p < postStableSamples; p++)
       {
         fImpCar_Type postCar;
         const float postMag = AD5940_readImpMagnitude(&postCar);
@@ -660,7 +801,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
 
         ESP_LOGI(TAG,
                  "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
-                 (unsigned)batNo, cellvalue[idx].impendance, winStart + IMP_STABLE_WINDOW,
+                 (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
                  postCount, i + 1 + postCount);
         tryPersistCellImpedanceToEeprom((unsigned)batNo, cellvalue[idx].impendance);
         return true;
@@ -675,7 +816,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
 
   ESP_LOGW(TAG,
            "cell %u Z: not stable in %d reads (likely charging) — using EEPROM %.3f mOhm",
-           (unsigned)batNo, IMP_READ_MAX, *outZ);
+           (unsigned)batNo, (int)readMax, *outZ);
   return false;
 }
 
@@ -686,9 +827,11 @@ static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   const int16_t newC = impMohmToEepromCenti(z_mOhm);
   if (newC <= 0)
     return;
+  dataSyncLockSystemConfig();
   systemDefaultValue.baseImpendance[idx] = newC;
   eepromNvsWriteBlock(&systemDefaultValue);
   EEPROM.commit();
+  dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
   ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, z_mOhm);
 }
@@ -757,6 +900,7 @@ static uint16_t voltageRotateBatNo = 1;
 void setup()
 {
 
+  dataSyncInit();
   EEPROM.begin((unsigned)EEPROM_NV_RESERVED_BYTES);
   readnWriteEEProm();
   pinsetup();
@@ -784,6 +928,14 @@ void setup()
   SerialBT.begin(bleName.c_str());
   Serial.printf("\nBluetooth Name : %s\n",bleName.c_str());
   wifiApmodeConfig();
+  printWebLoginCredentials();
+#ifdef WIFI_AP_MODE
+  if (s_webApiTaskHandle == nullptr)
+  {
+    xTaskCreatePinnedToCore(webApiTask, "WebApiTask", 4096, NULL, 1, &s_webApiTaskHandle, 0);
+    ESP_LOGI(TAG, "WebApiTask started (core0, prio1)");
+  }
+#endif
 
   lsFile.writeLogString(strResetReason);
 
@@ -803,6 +955,7 @@ void setup()
   Mcp23s08_initOutputsAll();
   initCellValue();
   applyAllCellImpedanceFromEeprom();
+  dataSyncPublishCellSnapshot(cellvalue, MAX_INSTALLED_CELLS);
   Mcp23s08_setOutput(mcpBatteryMuxPattern(0));
   //for(int i=0;i<1;i){
   scanBatteriesAds1220(1);
@@ -833,8 +986,8 @@ void setup()
   ESP_LOGI(TAG, "Active measure cells: %u (MEASURE_ACTIVE_CELLS=%d)",
            (unsigned)measureActiveCellCount(), MEASURE_ACTIVE_CELLS);
 #if MEASURE_TEST_COMBINED_VZ
-  ESP_LOGI(TAG, "TEST: every %ums V+Z together, Z max %d reads (charger monitor)",
-           (unsigned)CELL_VOLTAGE_INTERVAL_MS, IMP_READ_MAX);
+  ESP_LOGI(TAG, "TEST: every %ums V+Z together, Z max %u reads (charger monitor)",
+           (unsigned)CELL_VOLTAGE_INTERVAL_MS, (unsigned)impedanceReadMax());
 #else
   ESP_LOGI(TAG, "Voltage interval %ums, impedance period %lus (EEPROM ImpedanceMeasurePeriod)",
            (unsigned)CELL_VOLTAGE_INTERVAL_MS,
@@ -894,8 +1047,10 @@ void loop(void)
       ctCurrentUpdate();
     }
 #ifdef WIFI_AP_MODE
-    restApiHandle();
+    if (s_webApiTaskHandle == nullptr)
+      restApiHandle();
 #endif
+    dataSyncPublishCellSnapshot(cellvalue, MAX_INSTALLED_CELLS);
     vTaskDelay(100);
     return;
   }
@@ -980,8 +1135,10 @@ void loop(void)
   }
 
 #ifdef WIFI_AP_MODE
-  restApiHandle();
+  if (s_webApiTaskHandle == nullptr)
+    restApiHandle();
 #endif
 
+  dataSyncPublishCellSnapshot(cellvalue, MAX_INSTALLED_CELLS);
   vTaskDelay(100);
 }

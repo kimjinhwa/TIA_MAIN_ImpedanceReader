@@ -1,0 +1,60 @@
+#ifndef WEB_FILE_UPLOAD_HTML_H
+#define WEB_FILE_UPLOAD_HTML_H
+
+/** Esp32SNMPforSUN include/main.h 의 style + fileUpload (SPIFFS 없을 때 fallback). */
+static const char WEB_FILE_UPLOAD_STYLE[] PROGMEM =
+    "<style>#file-input,input{width:100%;height:44px;border-radius:4px;margin:10px auto;font-size:15px}"
+    "input{background:#f1f1f1;border:0;padding:0 15px}body{background:#3498db;font-family:sans-serif;font-size:14px;color:#777}"
+    "#file-input{padding:0;border:1px solid #ddd;line-height:44px;text-align:left;display:block;cursor:pointer}"
+    "#bar,#prgbar{background-color:#f1f1f1;border-radius:10px}#bar{background-color:#3498db;width:0%;height:10px}"
+    "form{background:#fff;max-width:258px;margin:75px auto;padding:30px;border-radius:5px;text-align:center}"
+    ".btn{background:#3498db;color:#fff;cursor:pointer}</style>";
+
+static const char WEB_FILE_UPLOAD_BODY[] PROGMEM =
+    "<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
+    "<input type='file' name='update' id='file' onchange='sub(this)' style=display:none multiple>"
+    "<label id='file-input' for='file'>   Choose file...</label>"
+    "<input type='submit' class=btn value='Update(HTML,CSS,etc)'>"
+    "<br><br><div id='prg'></div><br><div id='prgbar'><div id='bar'></div></div><br></form>"
+    "<p style='text-align:center'><a href='/login.html' style='color:#fff'>Login</a></p>"
+    "<script>"
+    "function sub(obj){"
+    "var fileName=obj.value.split('\\\\');"
+    "document.getElementById('file-input').innerHTML='   '+fileName[fileName.length-1];"
+    "};"
+    "document.getElementById('upload_form').addEventListener('submit',function(e){"
+    "e.preventDefault();"
+    "var form=document.getElementById('upload_form');"
+    "var data=new FormData(form);"
+    "var xhr=new XMLHttpRequest();"
+    "xhr.open('POST','/upload',true);"
+    "xhr.upload.addEventListener('progress',function(evt){"
+    "if(evt.lengthComputable){"
+    "var per=evt.loaded/evt.total;"
+    "document.getElementById('prg').textContent='progress: '+Math.round(per*100)+'%';"
+    "document.getElementById('bar').style.width=Math.round(per*100)+'%';"
+    "}"
+    "},false);"
+    "xhr.onload=function(){"
+    "if(xhr.status>=200&&xhr.status<300){"
+    "document.getElementById('prg').textContent='upload done';"
+    "}else{"
+    "document.getElementById('prg').textContent='upload failed: '+xhr.status;"
+    "}"
+    "};"
+    "xhr.onerror=function(){"
+    "document.getElementById('prg').textContent='network error';"
+    "};"
+    "xhr.send(data);"
+    "});"
+    "function getCookie(n){var e=n+'=',c=document.cookie.split(';');"
+    "for(var i=0;i<c.length;i++){var t=c[i];while(t.charAt(0)==' ')t=t.substring(1);"
+    "if(t.indexOf(e)==0)return t.substring(e.length);}return null;}"
+    "window.onload=function(){"
+    "var c=getCookie('login');"
+    "if(c&&new Date()<new Date(c))return;"
+    "window.location.href='/login.html';"
+    "};"
+    "</script>";
+
+#endif

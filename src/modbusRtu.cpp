@@ -3,6 +3,7 @@
 #include <Ads1220.h>
 #include "modbusRtu.h"
 #include "mainGrobal.h"
+#include "dataSync.h"
 #include "eepromNvs.hpp"
 #include "../Version.h"
 #include <ModbusClientRTU.h>
@@ -14,6 +15,14 @@ uint16_t modbusReg50BaseImpProgress = 0;
 /** Modbus주소.md — FC04 최대 셀 수 */
 #define MODBUS_MAX_CELLS 16u
 #define MODBUS_REG_BASE_IMP_PROGRESS 50u
+#define MODBUS_REG_IMP_READ_MAX 15u
+#define MODBUS_REG_IMP_STABLE_WINDOW 16u
+#define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u
+#define MODBUS_REG_IMP_PERIOD_SEC 18u
+#define MODBUS_IMP_READ_MAX_DEFAULT 60u
+#define MODBUS_IMP_READ_MAX_MAX 120u
+#define MODBUS_IMP_STABLE_WINDOW_DEFAULT 5u
+#define MODBUS_IMP_STABLE_WINDOW_MAX 20u
 
 /** FC03/FC06 보정·설정 (EEPROM nvsSystemSet에 없는 항목은 RAM, 재부팅 시 기본값). */
 static struct
@@ -90,13 +99,31 @@ static uint16_t impCentiToModbusReg(int16_t centi)
   return (uint16_t)min((int)centi, 65535);
 }
 
-static uint16_t modbusOpenWireStatus(void)
+static uint16_t modbusSanitizeImpReadMax(uint16_t v)
+{
+  if (v < 1u || v > MODBUS_IMP_READ_MAX_MAX)
+    return (uint16_t)MODBUS_IMP_READ_MAX_DEFAULT;
+  return v;
+}
+
+static uint16_t modbusSanitizeImpStableWindow(uint16_t v, uint16_t readMax)
+{
+  if (v < 2u || v > MODBUS_IMP_STABLE_WINDOW_MAX)
+    v = (uint16_t)MODBUS_IMP_STABLE_WINDOW_DEFAULT;
+  if (v > readMax)
+    v = readMax;
+  if (v < 2u)
+    v = 2u;
+  return v;
+}
+
+static uint16_t modbusOpenWireStatus(const _cell_value *cells)
 {
   uint16_t mask = 0;
   const uint16_t n = modbusInstalledCells();
   for (uint16_t i = 0; i < n; i++)
   {
-    if (cellvalue[i].voltage < 0.6f)
+    if (cells[i].voltage < 0.6f)
       mask |= (uint16_t)(1u << i);
   }
   return mask;
@@ -109,13 +136,13 @@ static int32_t modbusScaleS16(int32_t raw, int16_t offset, uint16_t gain)
   return (raw + (int32_t)offset) * (int32_t)gain / 1000;
 }
 
-static uint16_t modbusPackTotalVoltageMv(void)
+static uint16_t modbusPackTotalVoltageMv(const _cell_value *cells)
 {
   uint32_t sum = 0;
   const uint16_t n = modbusInstalledCells();
   for (uint16_t i = 0; i < n; i++)
   {
-    const float v = cellvalue[i].voltage;
+    const float v = cells[i].voltage;
     if (v > 0.0f)
       sum += (uint32_t)(v * 1000.0f + 0.5f);
   }
@@ -131,6 +158,7 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
 {
   if (count < 51)
     return;
+  dataSyncLockSystemConfig();
 
   uint16_t maj = 0;
   uint16_t min = 0;
@@ -145,14 +173,21 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
   reg[5] = maj;
   reg[6] = min;
   reg[7] = pat;
-  reg[8] = modbusOpenWireStatus();
+  _cell_value snap[MAX_INSTALLED_CELLS] = {0};
+  dataSyncReadCellSnapshot(snap, MAX_INSTALLED_CELLS);
+  reg[8] = modbusOpenWireStatus(snap);
   reg[9] = s_modbusCalib.useHoleCt;
   reg[10] = (uint16_t)(int16_t)s_modbusCalib.tempOffset;
   reg[11] = (uint16_t)(int16_t)s_modbusCalib.ampereOffset;
   reg[12] = s_modbusCalib.ampereGain;
   reg[13] = (uint16_t)(int16_t)s_modbusCalib.totalVoltageOffset;
   reg[14] = s_modbusCalib.totalVoltageGain;
+  reg[MODBUS_REG_IMP_READ_MAX] = modbusSanitizeImpReadMax(systemDefaultValue.ACVoltPP);
+  reg[MODBUS_REG_IMP_STABLE_WINDOW] = modbusSanitizeImpStableWindow(systemDefaultValue.DCVolt, reg[MODBUS_REG_IMP_READ_MAX]);
+  reg[MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT] = (uint16_t)constrain((int)systemDefaultValue.ImpedanceFactor, 1, 100);
+  reg[MODBUS_REG_IMP_PERIOD_SEC] = systemDefaultValue.ImpedanceMeasurePeriod == 0 ? 3600u : systemDefaultValue.ImpedanceMeasurePeriod;
   reg[MODBUS_REG_BASE_IMP_PROGRESS] = modbusReg50BaseImpProgress;
+  dataSyncUnlockSystemConfig();
 }
 
 static void modbusFillFc04Input(uint16_t *reg, unsigned count)
@@ -160,13 +195,15 @@ static void modbusFillFc04Input(uint16_t *reg, unsigned count)
   if (count < 96)
     return;
 
+  _cell_value snap[MAX_INSTALLED_CELLS] = {0};
+  dataSyncReadCellSnapshot(snap, MAX_INSTALLED_CELLS);
   const uint16_t n = modbusInstalledCells();
 
   for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
   {
     if (i < n)
     {
-      int32_t mv = (int32_t)(cellvalue[i].voltage * 1000.0f + 0.5f);
+      int32_t mv = (int32_t)(snap[i].voltage * 1000.0f + 0.5f);
       mv = modbusScaleS16(mv, s_modbusCalib.cellOffset, s_modbusCalib.cellGain);
       if (mv < 0)
         mv = 0;
@@ -199,16 +236,17 @@ static void modbusFillFc04Input(uint16_t *reg, unsigned count)
     reg[18] = (uint16_t)(int16_t)ax10;
   }
 
-  reg[19] = modbusPackTotalVoltageMv();
+  reg[19] = modbusPackTotalVoltageMv(snap);
 
   for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
   {
     if (i < n)
-      reg[60 + i] = impMohmToModbusReg(cellvalue[i].impendance);
+      reg[60 + i] = impMohmToModbusReg(snap[i].impendance);
     else
       reg[60 + i] = 0;
   }
 
+  dataSyncLockSystemConfig();
   for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
   {
     if (i < n)
@@ -216,6 +254,7 @@ static void modbusFillFc04Input(uint16_t *reg, unsigned count)
     else
       reg[80 + i] = 0;
   }
+  dataSyncUnlockSystemConfig();
 }
 
 static bool modbusAddressRangeOk(uint16_t address, uint16_t words, uint16_t maxAddr)
@@ -243,7 +282,11 @@ static ModbusMessage modbusReadRegisters(ModbusMessage request, uint8_t fc, uint
   uint16_t buf[256];
   memset(buf, 0, sizeof(buf));
   if (fc == READ_HOLD_REGISTER)
+  {
+    dataSyncLockSystemConfig();
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    dataSyncUnlockSystemConfig();
+  }
   fill(buf, 256);
 
   response.add(request.getServerID(), fc, (uint8_t)(words * 2));
@@ -304,6 +347,27 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
     if (value == 0)
       value = 1000;
     s_modbusCalib.totalVoltageGain = value;
+    return true;
+  case MODBUS_REG_IMP_READ_MAX:
+    if (value < 1 || value > MODBUS_IMP_READ_MAX_MAX)
+      return false;
+    systemDefaultValue.ACVoltPP = value;
+    systemDefaultValue.DCVolt = modbusSanitizeImpStableWindow(systemDefaultValue.DCVolt, value);
+    return true;
+  case MODBUS_REG_IMP_STABLE_WINDOW:
+    if (value < 2 || value > MODBUS_IMP_STABLE_WINDOW_MAX)
+      return false;
+    systemDefaultValue.DCVolt = modbusSanitizeImpStableWindow(value, modbusSanitizeImpReadMax(systemDefaultValue.ACVoltPP));
+    return true;
+  case MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT:
+    if (value < 1 || value > 100)
+      return false;
+    systemDefaultValue.ImpedanceFactor = (uint8_t)value;
+    return true;
+  case MODBUS_REG_IMP_PERIOD_SEC:
+    if (value < 1 || value > 65535)
+      return false;
+    systemDefaultValue.ImpedanceMeasurePeriod = value;
     return true;
   case MODBUS_REG_BASE_IMP_PROGRESS:
     modbusOnFc06Reg50Write(value);
@@ -446,7 +510,7 @@ ModbusMessage FC06(ModbusMessage request)
 
   ESP_LOGI("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
 
-  if (writeAddress <= 14 || writeAddress == MODBUS_REG_BASE_IMP_PROGRESS)
+  if (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC || writeAddress == MODBUS_REG_BASE_IMP_PROGRESS)
   {
     if (writeAddress >= 5 && writeAddress <= 8)
     {
@@ -454,17 +518,20 @@ ModbusMessage FC06(ModbusMessage request)
       return response;
     }
     bool needReboot = false;
+    dataSyncLockSystemConfig();
     if (!modbusWriteHolding(writeAddress, value, &needReboot))
     {
+      dataSyncUnlockSystemConfig();
       response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
       return response;
     }
-    if (writeAddress == 0 || writeAddress == 1 || (writeAddress >= 9 && writeAddress <= 14))
+    if (writeAddress == 0 || writeAddress == 1 || (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC))
     {
       eepromNvsWriteBlock(&systemDefaultValue);
       EEPROM.commit();
       EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     }
+    dataSyncUnlockSystemConfig();
     if (needReboot)
       ESP.restart();
     return response;

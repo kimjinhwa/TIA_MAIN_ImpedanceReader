@@ -28,6 +28,10 @@
 | 12 | 전류 게인 (AmpereGain) | - |
 | 13 | 총전압 오프셋 (TotalVoltageOffset) | - |
 | 14 | 총전압 게인 (TotalVoltageGain) | - |
+| 15 | 내부저항 최대 읽기 횟수 (impedanceReadMax) | 1~120 |
+| 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하 |
+| 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
+| 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
 | **50** | **내부저항 기준 측정 진행 상태** | FC06으로 시작; 진행 중 **1~InstalledCells**, 완료·대기 **0** (아래) |
 
 #### 주소 50 — 진행 상태 (FC03 읽기 / FC06 쓰기)
@@ -121,6 +125,10 @@ stateDiagram-v2
 | 12 | 전류 게인 (AmpereGain) | - |
 | 13 | 총전압 오프셋 (TotalVoltageOffset) | - |
 | 14 | 총전압 게인 (TotalVoltageGain) | - |
+| 15 | 내부저항 최대 읽기 횟수 (impedanceReadMax) | 1~120 |
+| 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하로 보정 |
+| 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
+| 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
 | **50** | **내부저항 기준 측정 시작** | **값 = 1**: 1번 셀부터 스캔·EEPROM 저장 시작, **FC03[50]**을 1→…→N으로 증가, 완료 시 펌웨어가 **0** 설정. 진행 상태는 **FC03 주소 50**으로 읽기 |
 
 > **참고:** FC06 Broadcast (주소 0) 지원 - ANY_SERVER로 전송 시 모든 장치에 Modbus 주소 등 설정 가능

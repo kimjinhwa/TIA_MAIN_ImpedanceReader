@@ -1,4 +1,5 @@
-#define VERSION "1.0.8" // Modbus 485 통신 기능 테스트 완료 
+#define VERSION "1.0.9" // web 조회/설정을 완료함. 
+//#define VERSION "1.0.8" // Modbus 485 통신 기능 테스트 완료 
 //#define VERSION "1.0.7" // CT 전류 측정 까지 실측하여 정확하게 보정함. 
 //#define VERSION "1.0.6" // NTC 측정 추가.  
 //#define VERSION "1.0.5" // 임피던스 측정 성공 시 EEPROM 갱신 조건 변경.  

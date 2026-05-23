@@ -1,4 +1,7 @@
 {
+    "livePreview.serverRoot": "UploadFiles",
+    "liveServer.settings.root": "/UploadFiles",
+    "liveServer.settings.port": 5500,
     "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
     "C_Cpp.intelliSenseEngine": "default",
     "C_Cpp.errorSquiggles": "enabled",

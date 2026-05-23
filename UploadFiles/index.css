@@ -1,0 +1,331 @@
+html {
+    min-width: 850px;
+    min-height: 1000px;
+    /* max-width: 1050px; */
+}
+
+/* body {
+     width: 850px; 
+     margin: 100 px; 
+} 
+*/
+
+a {
+    text-decoration: none;
+    color: white;
+}
+
+#HtmlMainView {
+    display: grid;
+    grid-template-columns: 900px;
+    justify-content: center;
+    align-items: center;
+}
+
+
+document.getElementById('btnQuery1').addEventListener('click', (e) => {
+    let data = JSON.stringify({ 'command_type': 'ModBusSet', 'reg': 12, 'set': 0b0000111000000000 }); /* BIT 12 =0 열림*/
+    if (webSocket.readyState === webSocket.OPEN) {
+        sendString = data;
+        webSocket.send(data);
+    }
+    else console.log("socket was closed");
+})
+
+#HtmlLogView {
+    display: grid;
+    grid-template-columns: 450px 450px;
+    column-gap: 30px;
+    justify-content: center;
+    align-items: center;
+}
+
+
+#eventDiv,
+
+#viewBasic {
+    display: grid;
+    grid-template-columns: 900px;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+.data-list {
+  padding: 50px;
+  display: grid;
+  grid-gap: 20px;
+}
+
+.data-list div {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  align-items: center;
+  border: 1px solid #edd4d4;
+}
+
+.data-list dt {
+  font-weight: bold;
+  text-align: left;
+  border-right: 1px solid #edd4d4;
+  padding: 10px;
+}
+
+.data-list dd {
+  text-align: center;
+  margin-left: 0;
+  padding: 10px;
+}
+/* 
+.data-list div:first-child {
+  border-top: 2px solid black;
+  border-bottom: 2px solid black;
+}
+
+.data-list dt:first-child {
+  border-left: 2px solid black;
+}
+
+.data-list dt:last-child {
+  border-right: none;
+} */
+
+
+
+
+
+#heading {
+    border: #4404aa;
+    font-size: small;
+}
+
+.inputStatus {
+    padding-right: 30px;
+}
+
+.chargerStatus {
+    margin-left: 5px;
+    margin-right: 5px;
+    text-align: center;
+    width: fit-content;
+}
+
+.batteryStatus {
+    /* padding-left: 30px;
+    margin-right: 150px; */
+    text-align: center;
+}
+
+.inputStatus td,
+.inputStatus th,
+.batteryStatus td,
+.batteryStatus th {
+    border: 1px solid #ddd;
+    padding: 18px;
+    text-align: center;
+}
+
+.chargerStatus td,
+.chargerStatus th {
+    border: 0px solid #ddd;
+    padding-left: 15px;
+    padding-right: 15px;
+    text-align: center;
+}
+
+.inputStatus tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.inputStatus tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.inputStatus tr:hover {
+    background-color: #ddd;
+}
+
+.batteryStatus tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.batteryStatus tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.batteryStatus tr:hover {
+    background-color: #ddd;
+}
+
+.inputStatus th,
+.batteryStatus th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    text-align: center;
+    background-color: #04AA6D;
+    color: white;
+}
+
+.chargerStatus th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    text-align: left;
+    background-color: #eef5f2e7;
+    color: rgb(16, 15, 15);
+}
+
+.chargerStatus tr {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    text-align: center;
+    background-color: #18392d;
+    color: white;
+}
+
+/* menustart*/
+/* width: 300px; */
+/* .navbar_menu {
+} */
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #263343;
+    padding: 8px 12px;
+}
+
+.navbar_menu {
+    display: flex;
+    list-style: none;
+    padding-left: 0;
+}
+
+.navbar_menu li {
+    padding: 8px 12px;
+}
+
+.firmware_ul>li>a {
+    display: block;
+}
+
+.firmware_ul :hover {
+    display: block;
+}
+
+.firmware_ul li {
+    text-align: center;
+}
+
+.firmware_ul {
+    list-style: none;
+    display: none;
+    /* display: block; */
+}
+
+.firmware_ul>li>a:hover {
+    display: block;
+    background-color: #d49466;
+}
+
+.navbar_menu li:hover>ul {
+    /* background-color: #d49466; */
+    border-radius: 4px;
+    display: block;
+}
+
+.navbar_icons {
+    list-style: none;
+    color: white;
+    display: flex;
+}
+
+.navbar_icons li {
+    padding: 8px, 12px;
+}
+
+/* */
+.myCanvas {
+    background-color: #eee;
+    display: block;
+    margin: 0 auto;
+}
+
+.footer {
+    display: flex;
+    position: fixed;
+    justify-content: space-between;
+    align-items: center;
+    ;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    background-color: rgb(216, 201, 201);
+    ;
+    color: white;
+    text-align: center;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+th,
+td {
+    text-align: left;
+    padding: 8px;
+}
+
+tr:nth-child(even) {
+    background-color: #f2f2f2
+}
+
+th {
+    background-color: #04AA6D;
+    color: white;
+}
+
+.messageBar {
+    color: #4404aa;
+}
+
+#statusBar {
+    font-size: xx-small;
+    color: rgb(15, 19, 19);
+}
+
+/* */
+#testRoutinea {
+    display: block;
+    grid-template-columns: 250px 200px;
+    justify-content: center;
+    justify-items: center;
+    align-items: center;
+}
+
+/* 네트웍 설정 부분*/
+.viewSetNetwork {
+    display: grid;
+    grid-template-columns: 250px 200px auto;
+    justify-content: center;
+    row-gap: 15px;
+}
+
+.cssLblNetwork {
+    font-size: medium;
+    font-weight: 700;
+    color: rgb(9, 11, 83);
+}
+
+.messageBar {
+    display: none;
+}
+
+#testRoutine {
+    background-color: bisque;
+    display: none;
+}
+#dialog
+{
+  background-color: rgb(238, 226, 235);
+}
