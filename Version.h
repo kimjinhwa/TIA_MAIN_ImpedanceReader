@@ -1,4 +1,6 @@
-#define VERSION "1.0.14" //  시리얼 통신이 끊어지면 시스템이 계속 재부팅되는 문제>
+#define VERSION "1.0.15" //  Json 라이브러리도 바꿈 
+//  시리얼 통신이 끊어지면...전원을 외부공급르로 하니 괞찮아졌다. 
+//#define VERSION "1.0.14" //  시리얼 통신이 끊어지면 시스템이 계속 재부팅되는 문제>
 //#define VERSION "1.0.14" // EEPROM 저장 및 읽기를 일관성 있게 했다 
 //#define VERSION "1.0.13" // Modbus ID를 EEPROM에 저장하고 읽을수 있게 했다. 
 //#define VERSION "1.0.12" // 셀 게인, 셀 오프셋, 홀 CT 사용 설정값을 EEPROM에 저장하고 읽을수 있게 했다. 

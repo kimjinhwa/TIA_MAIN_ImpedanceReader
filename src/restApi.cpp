@@ -3,6 +3,7 @@
 #ifdef WIFI_AP_MODE
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
@@ -31,7 +32,8 @@ static const char *const TAG = "RestApi";
 static WebServer s_server(80);
 
 static bool apiRequireSession(void);
-static void jsonAppendEscaped(char *dst, size_t cap, size_t *off, const char *text);
+static void sendJsonDocumentResponse(int statusCode, JsonDocument &doc);
+static void sendJsonError(int statusCode, const char *errorText);
 
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern nvsSystemSet systemDefaultValue;
@@ -87,11 +89,29 @@ static void sendApiPreflight(void)
   s_server.send(200, "text/plain", "OK");
 }
 
+static void sendJsonDocumentResponse(int statusCode, JsonDocument &doc)
+{
+  String payload;
+  serializeJson(doc, payload);
+  s_server.send(statusCode, "application/json", payload);
+}
+
+static void sendJsonError(int statusCode, const char *errorText)
+{
+  JsonDocument doc;
+  doc["ok"] = false;
+  if (errorText && errorText[0] != '\0')
+    doc["error"] = errorText;
+  sendJsonDocumentResponse(statusCode, doc);
+}
+
 static void handleApiHealth(void)
 {
   sendCorsHeaders();
-  s_server.send(200, "application/json",
-                  "{\"ok\":true,\"service\":\"impedance-web\"}");
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["service"] = "impedance-web";
+  sendJsonDocumentResponse(200, doc);
 }
 
 static String makeSessionToken(void)
@@ -186,36 +206,6 @@ static void clearSessionCookie(void)
                       SESSION_COOKIE_NAME "=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
 }
 
-static bool jsonExtractString(const char *body, const char *key, char *out, size_t outLen)
-{
-  if (!body || !key || !out || outLen < 2)
-    return false;
-
-  char pattern[64];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-  const char *p = strstr(body, pattern);
-  if (!p)
-    return false;
-
-  p += strlen(pattern);
-  while (*p == ' ' || *p == '\t')
-    p++;
-  if (*p != ':')
-    return false;
-  p++;
-  while (*p == ' ' || *p == '\t')
-    p++;
-  if (*p != '"')
-    return false;
-  p++;
-
-  size_t i = 0;
-  while (*p && *p != '"' && i + 1 < outLen)
-    out[i++] = *p++;
-  out[i] = '\0';
-  return i > 0;
-}
-
 static void trimInPlace(char *s)
 {
   if (!s)
@@ -251,34 +241,68 @@ static void handleApiLogin(void)
 
   if (s_server.method() != HTTP_POST)
   {
-    s_server.send(405, "application/json", "{\"status\":\"error\",\"message\":\"Method not allowed\"}");
+    JsonDocument doc;
+    doc["status"] = "error";
+    doc["message"] = "Method not allowed";
+    sendJsonDocumentResponse(405, doc);
     return;
   }
 
-  const String body = s_server.arg("plain");
   char userid[16] = {0};
   char passwd[16] = {0};
-  bool hasUser = jsonExtractString(body.c_str(), "userid", userid, sizeof(userid));
-  bool hasPass = jsonExtractString(body.c_str(), "passwd", passwd, sizeof(passwd));
+  bool hasUser = false;
+  bool hasPass = false;
+
+  if (s_server.hasArg("plain"))
+  {
+    JsonDocument reqDoc;
+    if (deserializeJson(reqDoc, s_server.arg("plain")) == DeserializationError::Ok)
+    {
+      if (!reqDoc["userid"].isNull())
+      {
+        const char *value = reqDoc["userid"].as<const char *>();
+        if (value)
+        {
+          strncpy(userid, value, sizeof(userid) - 1);
+          hasUser = true;
+        }
+      }
+      if (!reqDoc["passwd"].isNull())
+      {
+        const char *value = reqDoc["passwd"].as<const char *>();
+        if (value)
+        {
+          strncpy(passwd, value, sizeof(passwd) - 1);
+          hasPass = true;
+        }
+      }
+    }
+  }
 
   if (!hasUser && s_server.hasArg("userid"))
+  {
     strncpy(userid, s_server.arg("userid").c_str(), sizeof(userid) - 1);
+    hasUser = userid[0] != '\0';
+  }
   if (!hasPass && s_server.hasArg("passwd"))
+  {
     strncpy(passwd, s_server.arg("passwd").c_str(), sizeof(passwd) - 1);
+    hasPass = passwd[0] != '\0';
+  }
 
   trimInPlace(userid);
   trimInPlace(passwd);
 
   if (userid[0] == '\0' || passwd[0] == '\0')
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing credentials\"}");
+    sendJsonError(400, "missing credentials");
     return;
   }
 
   if (!credentialsMatch(userid, passwd))
   {
     ESP_LOGW(TAG, "login failed user='%s'", userid);
-    s_server.send(401, "application/json", "{\"ok\":false,\"error\":\"invalid credentials\"}");
+    sendJsonError(401, "invalid credentials");
     return;
   }
 
@@ -287,7 +311,9 @@ static void handleApiLogin(void)
   ESP_LOGI(TAG, "login ok user='%s' tokenLen=%u expMs=%lu",
            userid, (unsigned)g_sessionToken.length(), (unsigned long)s_sessionExpireMs);
   s_server.sendHeader("Connection", "close");
-  s_server.send(200, "application/json", "{\"ok\":true}");
+  JsonDocument doc;
+  doc["ok"] = true;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiMe(void)
@@ -296,7 +322,11 @@ static void handleApiMe(void)
 
   if (!API_REQUIRE_AUTH)
   {
-    s_server.send(200, "application/json", "{\"ok\":true,\"authenticated\":true,\"devAuthBypass\":true}");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["authenticated"] = true;
+    doc["devAuthBypass"] = true;
+    sendJsonDocumentResponse(200, doc);
     return;
   }
 
@@ -306,11 +336,17 @@ static void handleApiMe(void)
     ESP_LOGW(TAG, "/api/me denied cookieLen=%u srvLen=%u expIn=%ld",
              (unsigned)reqTok.length(), (unsigned)g_sessionToken.length(),
              (long)((int32_t)s_sessionExpireMs - (int32_t)millis()));
-    s_server.send(401, "application/json", "{\"ok\":false,\"authenticated\":false}");
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["authenticated"] = false;
+    sendJsonDocumentResponse(401, doc);
     return;
   }
 
-  s_server.send(200, "application/json", "{\"ok\":true,\"authenticated\":true}");
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["authenticated"] = true;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static bool apiRequireSession(void)
@@ -320,7 +356,10 @@ static bool apiRequireSession(void)
   if (sessionIsValid())
     return true;
   sendCorsHeaders();
-  s_server.send(401, "application/json", "{\"ok\":false,\"authenticated\":false}");
+  JsonDocument doc;
+  doc["ok"] = false;
+  doc["authenticated"] = false;
+  sendJsonDocumentResponse(401, doc);
   return false;
 }
 
@@ -338,81 +377,6 @@ static void copySystemConfigSnapshot(nvsSystemSet *out)
   dataSyncUnlockSystemConfig();
 }
 
-static void jsonAppendEscaped(char *dst, size_t cap, size_t *off, const char *text)
-{
-  if (!dst || !off || !text)
-    return;
-  for (; *text && *off + 2 < cap; text++)
-  {
-    if (*text == '"' || *text == '\\')
-      dst[(*off)++] = '\\';
-    dst[(*off)++] = *text;
-  }
-  dst[*off] = '\0';
-}
-
-static const char *jsonFindObjectBody(const char *body, const char *name)
-{
-  if (!body || !name)
-    return nullptr;
-  char pattern[32];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", name);
-  const char *p = strstr(body, pattern);
-  if (!p)
-    return nullptr;
-  p += strlen(pattern);
-  while (*p == ' ' || *p == '\t' || *p == ':')
-    p++;
-  if (*p != '{')
-    return nullptr;
-  return p + 1;
-}
-
-static bool jsonExtractInObject(const char *objBody, const char *key, char *out, size_t outLen)
-{
-  if (!objBody || !key || !out || outLen < 2)
-    return false;
-  char pattern[64];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-  const char *p = strstr(objBody, pattern);
-  if (!p)
-    return false;
-  p += strlen(pattern);
-  while (*p == ' ' || *p == '\t')
-    p++;
-  if (*p != ':')
-    return false;
-  p++;
-  while (*p == ' ' || *p == '\t')
-    p++;
-  if (*p == '"')
-  {
-    p++;
-    size_t i = 0;
-    while (*p && *p != '"' && i + 1 < outLen)
-      out[i++] = *p++;
-    out[i] = '\0';
-    return i > 0;
-  }
-  if (strncmp(p, "true", 4) == 0)
-  {
-    strncpy(out, "true", outLen - 1);
-    out[outLen - 1] = '\0';
-    return true;
-  }
-  if (strncmp(p, "false", 5) == 0)
-  {
-    strncpy(out, "false", outLen - 1);
-    out[outLen - 1] = '\0';
-    return true;
-  }
-  size_t i = 0;
-  while (*p && *p != ',' && *p != '}' && *p != ' ' && i + 1 < outLen)
-    out[i++] = *p++;
-  out[i] = '\0';
-  return i > 0;
-}
-
 static void copyCfgField(char *dest, size_t destSize, const char *src)
 {
   if (!dest || destSize == 0 || !src || src[0] == '\0')
@@ -427,27 +391,31 @@ static void handleApiNetworkConfigGet(void)
   nvsSystemSet cfg;
   copySystemConfigSnapshot(&cfg);
 
-  char userEsc[24] = {0};
-  size_t off = 0;
-  jsonAppendEscaped(userEsc, sizeof(userEsc), &off, cfg.userid);
+  JsonDocument doc;
+  JsonObject network = doc["network"].to<JsonObject>();
+  network["macAddress"] = WiFi.macAddress();
+  network["ipAddress"] = ipUint32ToString(cfg.IPADDRESS);
+  network["subnetMask"] = ipUint32ToString(cfg.SUBNETMASK);
+  network["gateway"] = ipUint32ToString(cfg.GATEWAY);
 
-  char ipStr[20];
-  char maskStr[20];
-  char gwStr[20];
-  strncpy(ipStr, ipUint32ToString(cfg.IPADDRESS).c_str(), sizeof(ipStr) - 1);
-  strncpy(maskStr, ipUint32ToString(cfg.SUBNETMASK).c_str(), sizeof(maskStr) - 1);
-  strncpy(gwStr, ipUint32ToString(cfg.GATEWAY).c_str(), sizeof(gwStr) - 1);
+  JsonObject snmpAccess = doc["snmpAccess"].to<JsonObject>();
+  snmpAccess["ipAddress"] = "0.0.0.0";
+  snmpAccess["community"] = "public";
+  snmpAccess["permission"] = "NOACCESS";
 
-  static char json[768];
-  const String macAddress = WiFi.macAddress();
-  snprintf(json, sizeof(json),
-           "{\"network\":{\"macAddress\":\"%s\",\"ipAddress\":\"%s\",\"subnetMask\":\"%s\",\"gateway\":\"%s\"},"
-           "\"snmpAccess\":{\"ipAddress\":\"0.0.0.0\",\"community\":\"public\",\"permission\":\"NOACCESS\"},"
-           "\"trapAccess\":{\"ipAddress\":\"0.0.0.0\",\"community\":\"public\",\"accept\":true},"
-           "\"webAccess\":{\"webPort\":80,\"accessIp1\":\"0.0.0.0\",\"accessIp2\":\"0.0.0.0\","
-           "\"id\":\"%s\",\"pw\":\"\"}}",
-           macAddress.c_str(), ipStr, maskStr, gwStr, userEsc);
-  s_server.send(200, "application/json", json);
+  JsonObject trapAccess = doc["trapAccess"].to<JsonObject>();
+  trapAccess["ipAddress"] = "0.0.0.0";
+  trapAccess["community"] = "public";
+  trapAccess["accept"] = true;
+
+  JsonObject webAccess = doc["webAccess"].to<JsonObject>();
+  webAccess["webPort"] = 80;
+  webAccess["accessIp1"] = "0.0.0.0";
+  webAccess["accessIp2"] = "0.0.0.0";
+  webAccess["id"] = cfg.userid;
+  webAccess["pw"] = "";
+
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiNetworkConfigPost(void)
@@ -456,24 +424,26 @@ static void handleApiNetworkConfigPost(void)
 
   if (!s_server.hasArg("plain"))
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing body\"}");
+    sendJsonError(400, "missing body");
     return;
   }
 
-  const String body = s_server.arg("plain");
-  char ipText[20] = {0};
-  char subnetText[20] = {0};
-  char gatewayText[20] = {0};
-  char webId[16] = {0};
-  char webPw[16] = {0};
-
-  const char *netObj = jsonFindObjectBody(body.c_str(), "network");
-  if (netObj)
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, s_server.arg("plain")) != DeserializationError::Ok)
   {
-    jsonExtractInObject(netObj, "ipAddress", ipText, sizeof(ipText));
-    jsonExtractInObject(netObj, "subnetMask", subnetText, sizeof(subnetText));
-    jsonExtractInObject(netObj, "gateway", gatewayText, sizeof(gatewayText));
+    sendJsonError(400, "invalid json body");
+    return;
   }
+
+  JsonObject network = reqDoc["network"].as<JsonObject>();
+  JsonObject webAccess = reqDoc["webAccess"].as<JsonObject>();
+  const char *ipText = network["ipAddress"] | "";
+  const char *subnetText = network["subnetMask"] | "";
+  const char *gatewayText = network["gateway"] | "";
+  const char *webId = webAccess["id"] | "";
+  const char *webPw = webAccess["pw"] | "";
+  bool hasNetworkIp = !network["ipAddress"].isNull() || !network["subnetMask"].isNull() || !network["gateway"].isNull();
+  bool hasWebAccess = !webAccess["id"].isNull() || !webAccess["pw"].isNull();
 
   IPAddress newIp;
   IPAddress newSubnet;
@@ -481,42 +451,51 @@ static void handleApiNetworkConfigPost(void)
   if (ipText[0] && subnetText[0] && gatewayText[0] &&
       !(newIp.fromString(ipText) && newSubnet.fromString(subnetText) && newGateway.fromString(gatewayText)))
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid network ip\"}");
+    sendJsonError(400, "invalid network ip");
     return;
   }
   dataSyncLockSystemConfig();
-  if (ipText[0] && newIp.fromString(ipText))
+  if (hasNetworkIp && ipText[0] && newIp.fromString(ipText))
     systemDefaultValue.IPADDRESS = static_cast<uint32_t>(newIp);
-  if (subnetText[0] && newSubnet.fromString(subnetText))
+  if (hasNetworkIp && subnetText[0] && newSubnet.fromString(subnetText))
     systemDefaultValue.SUBNETMASK = static_cast<uint32_t>(newSubnet);
-  if (gatewayText[0] && newGateway.fromString(gatewayText))
+  if (hasNetworkIp && gatewayText[0] && newGateway.fromString(gatewayText))
     systemDefaultValue.GATEWAY = static_cast<uint32_t>(newGateway);
 
-  const char *webObj = jsonFindObjectBody(body.c_str(), "webAccess");
-  if (webObj)
+  if (hasWebAccess)
   {
-    jsonExtractInObject(webObj, "id", webId, sizeof(webId));
-    jsonExtractInObject(webObj, "pw", webPw, sizeof(webPw));
-    trimInPlace(webId);
-    trimInPlace(webPw);
-    if (webId[0])
-      copyCfgField(systemDefaultValue.userid, sizeof(systemDefaultValue.userid), webId);
-    if (webPw[0])
-      copyCfgField(systemDefaultValue.userpassword, sizeof(systemDefaultValue.userpassword), webPw);
+    char webIdBuf[16] = {0};
+    char webPwBuf[16] = {0};
+    strncpy(webIdBuf, webId, sizeof(webIdBuf) - 1);
+    strncpy(webPwBuf, webPw, sizeof(webPwBuf) - 1);
+    trimInPlace(webIdBuf);
+    trimInPlace(webPwBuf);
+    if (webIdBuf[0])
+      copyCfgField(systemDefaultValue.userid, sizeof(systemDefaultValue.userid), webIdBuf);
+    if (webPwBuf[0])
+      copyCfgField(systemDefaultValue.userpassword, sizeof(systemDefaultValue.userpassword), webPwBuf);
   }
 
   const bool saved = readnWriteEEProm(true);
+  char userLog[sizeof(systemDefaultValue.userid) + 1] = {0};
+  strncpy(userLog, systemDefaultValue.userid, sizeof(userLog) - 1);
   dataSyncUnlockSystemConfig();
 
   if (!saved)
   {
-    s_server.send(500, "application/json", "{\"ok\":false,\"rebootRequired\":false}");
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["rebootRequired"] = false;
+    sendJsonDocumentResponse(500, doc);
     return;
   }
 
-  ESP_LOGI(TAG, "network-config saved ip=%s user=%s", ipText, systemDefaultValue.userid);
+  ESP_LOGI(TAG, "network-config saved ip=%s user=%s", ipText, userLog);
   s_server.sendHeader("Connection", "close");
-  s_server.send(200, "application/json", "{\"ok\":true,\"rebootRequired\":true}");
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["rebootRequired"] = true;
+  sendJsonDocumentResponse(200, doc);
   delay(800);
   ESP.restart();
 }
@@ -630,13 +609,23 @@ static void handleApiSystemActionPost(void)
 
   if (!s_server.hasArg("plain"))
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing body\"}");
+    sendJsonError(400, "missing body");
     return;
   }
 
-  const String body = s_server.arg("plain");
   char action[40] = {0};
-  bool hasAction = jsonExtractString(body.c_str(), "action", action, sizeof(action));
+  bool hasAction = false;
+
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, s_server.arg("plain")) == DeserializationError::Ok)
+  {
+    const char *actionField = reqDoc["action"] | nullptr;
+    if (actionField && actionField[0] != '\0')
+    {
+      strncpy(action, actionField, sizeof(action) - 1);
+      hasAction = true;
+    }
+  }
   if (!hasAction && s_server.hasArg("action"))
   {
     const String actionArg = s_server.arg("action");
@@ -645,14 +634,18 @@ static void handleApiSystemActionPost(void)
   }
   if (!hasAction)
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing action\"}");
+    sendJsonError(400, "missing action");
     return;
   }
 
   if (strcmp(action, "formatFsFast") == 0)
   {
     lsFile.littleFsInitFast(1);
-    s_server.send(200, "application/json", "{\"ok\":true,\"action\":\"formatFsFast\",\"done\":true}");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["action"] = "formatFsFast";
+    doc["done"] = true;
+    sendJsonDocumentResponse(200, doc);
     return;
   }
 
@@ -664,23 +657,31 @@ static void handleApiSystemActionPost(void)
     dataSyncUnlockSystemConfig();
     if (!saved)
     {
-      s_server.send(500, "application/json", "{\"ok\":false,\"error\":\"eeprom commit failed\"}");
+      sendJsonError(500, "eeprom commit failed");
       return;
     }
-    s_server.send(200, "application/json", "{\"ok\":true,\"action\":\"resetSystemDefaults\",\"done\":true}");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["action"] = "resetSystemDefaults";
+    doc["done"] = true;
+    sendJsonDocumentResponse(200, doc);
     return;
   }
 
   if (strcmp(action, "reboot") == 0)
   {
     s_server.sendHeader("Connection", "close");
-    s_server.send(200, "application/json", "{\"ok\":true,\"action\":\"reboot\",\"rebooting\":true}");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["action"] = "reboot";
+    doc["rebooting"] = true;
+    sendJsonDocumentResponse(200, doc);
     delay(600);
     ESP.restart();
     return;
   }
 
-  s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"unknown action\"}");
+  sendJsonError(400, "unknown action");
 }
 
 static void handleApiImpedanceBaselineStartPost(void)
@@ -691,20 +692,20 @@ static void handleApiImpedanceBaselineStartPost(void)
 
   if (modbusReg50BaseImpProgress != 0)
   {
-    static char busyJson[160];
-    snprintf(busyJson, sizeof(busyJson),
-             "{\"ok\":false,\"error\":\"baseline scan busy\",\"progressCell\":%u}",
-             (unsigned)modbusReg50BaseImpProgress);
-    s_server.send(409, "application/json", busyJson);
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = "baseline scan busy";
+    doc["progressCell"] = (unsigned)modbusReg50BaseImpProgress;
+    sendJsonDocumentResponse(409, doc);
     return;
   }
 
   modbusOnFc06Reg50Write(1);
-  static char okJson[160];
-  snprintf(okJson, sizeof(okJson),
-           "{\"ok\":true,\"started\":true,\"progressCell\":%u}",
-           (unsigned)modbusReg50BaseImpProgress);
-  s_server.send(200, "application/json", okJson);
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["started"] = true;
+  doc["progressCell"] = (unsigned)modbusReg50BaseImpProgress;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiImpedanceBaselineStatusGet(void)
@@ -728,15 +729,14 @@ static void handleApiImpedanceBaselineStatusGet(void)
                                ? (uint16_t)(((uint32_t)completed * 100u) / (uint32_t)totalCells)
                                : 0u;
 
-  static char json[256];
-  snprintf(json, sizeof(json),
-           "{\"ok\":true,\"running\":%s,\"progressCell\":%u,\"completedCells\":%u,\"totalCells\":%u,\"percent\":%u}",
-           running ? "true" : "false",
-           (unsigned)progressCell,
-           (unsigned)completed,
-           (unsigned)totalCells,
-           (unsigned)percent);
-  s_server.send(200, "application/json", json);
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["running"] = running;
+  doc["progressCell"] = (unsigned)progressCell;
+  doc["completedCells"] = (unsigned)completed;
+  doc["totalCells"] = (unsigned)totalCells;
+  doc["percent"] = (unsigned)percent;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiBmsConfigGet(void)
@@ -755,32 +755,22 @@ static void handleApiBmsConfigGet(void)
   const uint8_t postSamples = bmsSanitizeImpedancePostSamples(cfg.TemperatureFactor);
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(cfg.RcalLoopCount);
 
-  static char json[768];
-  snprintf(json, sizeof(json),
-           "{\"ok\":true,\"bmsControl\":{"
-           "\"cellGain\":%u,"
-           "\"cellOffset\":%d,"
-           "\"useHoleCT\":%u,"
-           "\"ampereOffset\":%d,"
-           "\"ampereGain\":%u,"
-           "\"impedanceEepromChangePercent\":%u,"
-           "\"impedanceMeasurePeriodSec\":%u,"
-           "\"impedanceReadMax\":%u,"
-           "\"impedanceStableWindow\":%u,"
-           "\"impedanceStableTolPercent\":%u,"
-           "\"impedancePostStableSamples\":%u,"
-           "\"impedanceMinValidMohm\":%.1f"
-           "}}",
-           (unsigned)modbusGetCellGain(),
-           (int)modbusGetCellOffset(),
-           (unsigned)modbusGetUseHoleCt(),
-           (int)modbusGetAmpereOffset(),
-           (unsigned)modbusGetAmpereGain(),
-           (unsigned)changePercent, (unsigned)periodSec,
-           (unsigned)readMax, (unsigned)stableWindow,
-           (unsigned)stableTolPercent, (unsigned)postSamples,
-           (float)minValidDeci / 10.0f);
-  s_server.send(200, "application/json", json);
+  JsonDocument doc;
+  doc["ok"] = true;
+  JsonObject bmsControl = doc["bmsControl"].to<JsonObject>();
+  bmsControl["cellGain"] = (unsigned)modbusGetCellGain();
+  bmsControl["cellOffset"] = (int)modbusGetCellOffset();
+  bmsControl["useHoleCT"] = (unsigned)modbusGetUseHoleCt();
+  bmsControl["ampereOffset"] = (int)modbusGetAmpereOffset();
+  bmsControl["ampereGain"] = (unsigned)modbusGetAmpereGain();
+  bmsControl["impedanceEepromChangePercent"] = (unsigned)changePercent;
+  bmsControl["impedanceMeasurePeriodSec"] = (unsigned)periodSec;
+  bmsControl["impedanceReadMax"] = (unsigned)readMax;
+  bmsControl["impedanceStableWindow"] = (unsigned)stableWindow;
+  bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;
+  bmsControl["impedancePostStableSamples"] = (unsigned)postSamples;
+  bmsControl["impedanceMinValidMohm"] = (float)minValidDeci / 10.0f;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiBmsConfigPost(void)
@@ -791,39 +781,30 @@ static void handleApiBmsConfigPost(void)
 
   if (!s_server.hasArg("plain"))
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing body\"}");
+    sendJsonError(400, "missing body");
     return;
   }
 
-  const String body = s_server.arg("plain");
-  const char *cfgObj = jsonFindObjectBody(body.c_str(), "bmsControl");
-  if (!cfgObj)
-    cfgObj = body.c_str();
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, s_server.arg("plain")) != DeserializationError::Ok)
+  {
+    sendJsonError(400, "invalid json body");
+    return;
+  }
 
-  char percentText[16] = {0};
-  char periodText[16] = {0};
-  char readMaxText[16] = {0};
-  char stableWindowText[16] = {0};
-  char stableTolText[16] = {0};
-  char postSamplesText[16] = {0};
-  char minValidText[16] = {0};
-  char cellGainText[16] = {0};
-  char cellOffsetText[16] = {0};
-  char useHoleCtText[16] = {0};
-  char ampOffsetText[16] = {0};
-  char ampGainText[16] = {0};
-  const bool hasPercent = jsonExtractInObject(cfgObj, "impedanceEepromChangePercent", percentText, sizeof(percentText));
-  const bool hasPeriod = jsonExtractInObject(cfgObj, "impedanceMeasurePeriodSec", periodText, sizeof(periodText));
-  const bool hasReadMax = jsonExtractInObject(cfgObj, "impedanceReadMax", readMaxText, sizeof(readMaxText));
-  const bool hasStableWindow = jsonExtractInObject(cfgObj, "impedanceStableWindow", stableWindowText, sizeof(stableWindowText));
-  const bool hasStableTol = jsonExtractInObject(cfgObj, "impedanceStableTolPercent", stableTolText, sizeof(stableTolText));
-  const bool hasPostSamples = jsonExtractInObject(cfgObj, "impedancePostStableSamples", postSamplesText, sizeof(postSamplesText));
-  const bool hasMinValid = jsonExtractInObject(cfgObj, "impedanceMinValidMohm", minValidText, sizeof(minValidText));
-  const bool hasCellGain = jsonExtractInObject(cfgObj, "cellGain", cellGainText, sizeof(cellGainText));
-  const bool hasCellOffset = jsonExtractInObject(cfgObj, "cellOffset", cellOffsetText, sizeof(cellOffsetText));
-  const bool hasUseHoleCt = jsonExtractInObject(cfgObj, "useHoleCT", useHoleCtText, sizeof(useHoleCtText));
-  const bool hasAmpOffset = jsonExtractInObject(cfgObj, "ampereOffset", ampOffsetText, sizeof(ampOffsetText));
-  const bool hasAmpGain = jsonExtractInObject(cfgObj, "ampereGain", ampGainText, sizeof(ampGainText));
+  JsonObject cfgObj = reqDoc["bmsControl"].is<JsonObject>() ? reqDoc["bmsControl"].as<JsonObject>() : reqDoc.as<JsonObject>();
+  const bool hasPercent = !cfgObj["impedanceEepromChangePercent"].isNull();
+  const bool hasPeriod = !cfgObj["impedanceMeasurePeriodSec"].isNull();
+  const bool hasReadMax = !cfgObj["impedanceReadMax"].isNull();
+  const bool hasStableWindow = !cfgObj["impedanceStableWindow"].isNull();
+  const bool hasStableTol = !cfgObj["impedanceStableTolPercent"].isNull();
+  const bool hasPostSamples = !cfgObj["impedancePostStableSamples"].isNull();
+  const bool hasMinValid = !cfgObj["impedanceMinValidMohm"].isNull();
+  const bool hasCellGain = !cfgObj["cellGain"].isNull();
+  const bool hasCellOffset = !cfgObj["cellOffset"].isNull();
+  const bool hasUseHoleCt = !cfgObj["useHoleCT"].isNull();
+  const bool hasAmpOffset = !cfgObj["ampereOffset"].isNull();
+  const bool hasAmpGain = !cfgObj["ampereGain"].isNull();
   uint8_t nextPercent = 0;
   uint16_t nextPeriod = 0;
   uint16_t nextReadMax = 0;
@@ -841,16 +822,63 @@ static void handleApiBmsConfigPost(void)
       !hasPostSamples && !hasMinValid && !hasCellGain && !hasCellOffset &&
       !hasUseHoleCt && !hasAmpOffset && !hasAmpGain)
   {
-    s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"no bmsControl fields\"}");
+    sendJsonError(400, "no bmsControl fields");
     return;
   }
 
+  auto parseLongValue = [&](const char *key, long *out) -> bool
+  {
+    JsonVariant value = cfgObj[key];
+    if (value.isNull())
+      return false;
+    if (value.is<long>() || value.is<int>() || value.is<unsigned int>() || value.is<float>() || value.is<double>())
+    {
+      *out = value.as<long>();
+      return true;
+    }
+    const char *text = value.as<const char *>();
+    if (!text)
+      return false;
+    char *endptr = nullptr;
+    long parsed = strtol(text, &endptr, 10);
+    if (!endptr || endptr == text || *endptr != '\0')
+      return false;
+    *out = parsed;
+    return true;
+  };
+
+  auto parseFloatValue = [&](const char *key, float *out) -> bool
+  {
+    JsonVariant value = cfgObj[key];
+    if (value.isNull())
+      return false;
+    if (value.is<float>() || value.is<double>() || value.is<long>() || value.is<int>() || value.is<unsigned int>())
+    {
+      *out = value.as<float>();
+      return true;
+    }
+    const char *text = value.as<const char *>();
+    if (!text)
+      return false;
+    char *endptr = nullptr;
+    float parsed = strtof(text, &endptr);
+    if (!endptr || endptr == text || *endptr != '\0')
+      return false;
+    *out = parsed;
+    return true;
+  };
+
   if (hasCellGain)
   {
-    const long v = strtol(cellGainText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("cellGain", &v))
+    {
+      sendJsonError(400, "cellGain invalid");
+      return;
+    }
     if (v < 1 || v > 65535)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"cellGain out of range(1..65535)\"}");
+      sendJsonError(400, "cellGain out of range(1..65535)");
       return;
     }
     nextCellGain = (uint16_t)v;
@@ -858,10 +886,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasCellOffset)
   {
-    const long v = strtol(cellOffsetText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("cellOffset", &v))
+    {
+      sendJsonError(400, "cellOffset invalid");
+      return;
+    }
     if (v < -32768 || v > 32767)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"cellOffset out of range(-32768..32767)\"}");
+      sendJsonError(400, "cellOffset out of range(-32768..32767)");
       return;
     }
     nextCellOffset = (int16_t)v;
@@ -869,10 +902,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasUseHoleCt)
   {
-    const long v = strtol(useHoleCtText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("useHoleCT", &v))
+    {
+      sendJsonError(400, "useHoleCT invalid");
+      return;
+    }
     if (v < 0 || v > 65535)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"useHoleCT out of range(0..65535)\"}");
+      sendJsonError(400, "useHoleCT out of range(0..65535)");
       return;
     }
     nextUseHoleCt = (uint16_t)v;
@@ -880,10 +918,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasAmpOffset)
   {
-    const long v = strtol(ampOffsetText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("ampereOffset", &v))
+    {
+      sendJsonError(400, "ampereOffset invalid");
+      return;
+    }
     if (v < -32768 || v > 32767)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"ampereOffset out of range(-32768..32767)\"}");
+      sendJsonError(400, "ampereOffset out of range(-32768..32767)");
       return;
     }
     nextAmpOffset = (int16_t)v;
@@ -891,10 +934,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasAmpGain)
   {
-    const long v = strtol(ampGainText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("ampereGain", &v))
+    {
+      sendJsonError(400, "ampereGain invalid");
+      return;
+    }
     if (v < 1 || v > 65535)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"ampereGain out of range(1..65535)\"}");
+      sendJsonError(400, "ampereGain out of range(1..65535)");
       return;
     }
     nextAmpGain = (uint16_t)v;
@@ -902,10 +950,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasPercent)
   {
-    const long v = strtol(percentText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedanceEepromChangePercent", &v))
+    {
+      sendJsonError(400, "impedanceEepromChangePercent invalid");
+      return;
+    }
     if (v < 1 || v > 100)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceEepromChangePercent out of range(1..100)\"}");
+      sendJsonError(400, "impedanceEepromChangePercent out of range(1..100)");
       return;
     }
     nextPercent = (uint8_t)v;
@@ -913,10 +966,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasPeriod)
   {
-    const long v = strtol(periodText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedanceMeasurePeriodSec", &v))
+    {
+      sendJsonError(400, "impedanceMeasurePeriodSec invalid");
+      return;
+    }
     if (v < 1 || v > 65535)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceMeasurePeriodSec out of range(1..65535)\"}");
+      sendJsonError(400, "impedanceMeasurePeriodSec out of range(1..65535)");
       return;
     }
     nextPeriod = (uint16_t)v;
@@ -924,10 +982,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasReadMax)
   {
-    const long v = strtol(readMaxText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedanceReadMax", &v))
+    {
+      sendJsonError(400, "impedanceReadMax invalid");
+      return;
+    }
     if (v < 1 || v > (long)BMS_IMP_READ_MAX_MAX)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceReadMax out of range(1..120)\"}");
+      sendJsonError(400, "impedanceReadMax out of range(1..120)");
       return;
     }
     nextReadMax = (uint16_t)v;
@@ -935,10 +998,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasStableWindow)
   {
-    const long v = strtol(stableWindowText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedanceStableWindow", &v))
+    {
+      sendJsonError(400, "impedanceStableWindow invalid");
+      return;
+    }
     if (v < 2 || v > (long)BMS_IMP_STABLE_WINDOW_MAX)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceStableWindow out of range(2..20)\"}");
+      sendJsonError(400, "impedanceStableWindow out of range(2..20)");
       return;
     }
     nextStableWindow = (uint16_t)v;
@@ -946,10 +1014,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasStableTol)
   {
-    const long v = strtol(stableTolText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedanceStableTolPercent", &v))
+    {
+      sendJsonError(400, "impedanceStableTolPercent invalid");
+      return;
+    }
     if (v < 1 || v > 20)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceStableTolPercent out of range(1..20)\"}");
+      sendJsonError(400, "impedanceStableTolPercent out of range(1..20)");
       return;
     }
     nextStableTol = (uint8_t)v;
@@ -957,10 +1030,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasPostSamples)
   {
-    const long v = strtol(postSamplesText, nullptr, 10);
+    long v = 0;
+    if (!parseLongValue("impedancePostStableSamples", &v))
+    {
+      sendJsonError(400, "impedancePostStableSamples invalid");
+      return;
+    }
     if (v < 1 || v > (long)BMS_IMP_POST_SAMPLES_MAX)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedancePostStableSamples out of range(1..20)\"}");
+      sendJsonError(400, "impedancePostStableSamples out of range(1..20)");
       return;
     }
     nextPostSamples = (uint8_t)v;
@@ -968,10 +1046,15 @@ static void handleApiBmsConfigPost(void)
 
   if (hasMinValid)
   {
-    const float v = strtof(minValidText, nullptr);
+    float v = 0.0f;
+    if (!parseFloatValue("impedanceMinValidMohm", &v))
+    {
+      sendJsonError(400, "impedanceMinValidMohm invalid");
+      return;
+    }
     if (v < 0.1f || v > 1000.0f)
     {
-      s_server.send(400, "application/json", "{\"ok\":false,\"error\":\"impedanceMinValidMohm out of range(0.1..1000.0)\"}");
+      sendJsonError(400, "impedanceMinValidMohm out of range(0.1..1000.0)");
       return;
     }
     nextMinValidDeci = (uint16_t)(v * 10.0f + 0.5f);
@@ -1011,7 +1094,7 @@ static void handleApiBmsConfigPost(void)
   if (!readnWriteEEProm(true))
   {
     dataSyncUnlockSystemConfig();
-    s_server.send(500, "application/json", "{\"ok\":false,\"error\":\"eeprom commit failed\"}");
+    sendJsonError(500, "eeprom commit failed");
     return;
   }
   const uint16_t periodSec = bmsSanitizeImpedancePeriodSec(systemDefaultValue.ImpedanceMeasurePeriod);
@@ -1023,32 +1106,22 @@ static void handleApiBmsConfigPost(void)
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(systemDefaultValue.RcalLoopCount);
   dataSyncUnlockSystemConfig();
 
-  static char json[768];
-  snprintf(json, sizeof(json),
-           "{\"ok\":true,\"bmsControl\":{"
-           "\"cellGain\":%u,"
-           "\"cellOffset\":%d,"
-           "\"useHoleCT\":%u,"
-           "\"ampereOffset\":%d,"
-           "\"ampereGain\":%u,"
-           "\"impedanceEepromChangePercent\":%u,"
-           "\"impedanceMeasurePeriodSec\":%u,"
-           "\"impedanceReadMax\":%u,"
-           "\"impedanceStableWindow\":%u,"
-           "\"impedanceStableTolPercent\":%u,"
-           "\"impedancePostStableSamples\":%u,"
-           "\"impedanceMinValidMohm\":%.1f"
-           "}}",
-           (unsigned)modbusGetCellGain(),
-           (int)modbusGetCellOffset(),
-           (unsigned)modbusGetUseHoleCt(),
-           (int)modbusGetAmpereOffset(),
-           (unsigned)modbusGetAmpereGain(),
-           (unsigned)changePercent, (unsigned)periodSec,
-           (unsigned)readMax, (unsigned)stableWindow,
-           (unsigned)stableTolPercent, (unsigned)postSamples,
-           (float)minValidDeci / 10.0f);
-  s_server.send(200, "application/json", json);
+  JsonDocument doc;
+  doc["ok"] = true;
+  JsonObject bmsControl = doc["bmsControl"].to<JsonObject>();
+  bmsControl["cellGain"] = (unsigned)modbusGetCellGain();
+  bmsControl["cellOffset"] = (int)modbusGetCellOffset();
+  bmsControl["useHoleCT"] = (unsigned)modbusGetUseHoleCt();
+  bmsControl["ampereOffset"] = (int)modbusGetAmpereOffset();
+  bmsControl["ampereGain"] = (unsigned)modbusGetAmpereGain();
+  bmsControl["impedanceEepromChangePercent"] = (unsigned)changePercent;
+  bmsControl["impedanceMeasurePeriodSec"] = (unsigned)periodSec;
+  bmsControl["impedanceReadMax"] = (unsigned)readMax;
+  bmsControl["impedanceStableWindow"] = (unsigned)stableWindow;
+  bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;
+  bmsControl["impedancePostStableSamples"] = (unsigned)postSamples;
+  bmsControl["impedanceMinValidMohm"] = (float)minValidDeci / 10.0f;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiLogout(void)
@@ -1056,7 +1129,9 @@ static void handleApiLogout(void)
   sendCorsHeaders();
   sessionClear();
   clearSessionCookie();
-  s_server.send(200, "application/json", "{\"ok\":true}");
+  JsonDocument doc;
+  doc["ok"] = true;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static FILE *s_spiffsUploadFp = nullptr;
@@ -1315,19 +1390,6 @@ static void formatIso8601Utc(char *out, size_t cap)
            (unsigned long)(tv.tv_usec / 1000UL));
 }
 
-static int appendDataArray(char *buf, size_t cap, int off, const uint16_t *data, unsigned count)
-{
-  off += snprintf(buf + off, cap - (size_t)off, "\"data\":[");
-  for (unsigned i = 0; i < count; i++)
-  {
-    if (i > 0)
-      off += snprintf(buf + off, cap - (size_t)off, ",");
-    off += snprintf(buf + off, cap - (size_t)off, "%u", (unsigned)data[i]);
-  }
-  off += snprintf(buf + off, cap - (size_t)off, "]");
-  return off;
-}
-
 static void handleApiBattery(void)
 {
   nvsSystemSet cfg;
@@ -1353,66 +1415,54 @@ static void handleApiBattery(void)
   const float tempC = (float)ntcTemperatureC_x10[0] / 10.0f;
   const float currentA = modbusHasCurrentSensor() ? ((float)packCurrentA_x10 / 10.0f) : 0.0f;
 
-  static char json[4096];
-  int off = 0;
+  JsonDocument doc;
+  doc["status"] = "success";
+  doc["timestamp"] = ts;
 
-  off += snprintf(json + off, sizeof(json) - (size_t)off,
-                  "{\"status\":\"success\",\"timestamp\":\"%s\",\"data\":{\"multi_data\":{"
-                  "\"devices\":{\"%u\":{",
-                  ts, devAddr);
+  JsonObject data = doc["data"].to<JsonObject>();
+  JsonObject multiData = data["multi_data"].to<JsonObject>();
+  JsonObject devices = multiData["devices"].to<JsonObject>();
+  JsonObject device = devices[String(devAddr)].to<JsonObject>();
+  device["status"] = ok ? "success" : "failed";
 
-  if (ok)
-  {
-    off += snprintf(json + off, sizeof(json) - (size_t)off, "\"status\":\"success\",\"data\":{");
-    off = appendDataArray(json, sizeof(json), off, samples, REST_API_DATA_SLOTS);
-    off += snprintf(json + off, sizeof(json) - (size_t)off,
-                    ",\"temperature\":%.1f,\"current\":%.1f}}",
-                    tempC, currentA);
-  }
-  else
-  {
-    off += snprintf(json + off, sizeof(json) - (size_t)off,
-                    "\"status\":\"failed\",\"data\":{");
-    off = appendDataArray(json, sizeof(json), off, samples, REST_API_DATA_SLOTS);
-    off += snprintf(json + off, sizeof(json) - (size_t)off,
-                    ",\"temperature\":%.1f,\"current\":%.1f},\"error\":\"No valid cell data\"}",
-                    tempC, currentA);
-  }
+  JsonObject deviceData = device["data"].to<JsonObject>();
+  JsonArray dataArray = deviceData["data"].to<JsonArray>();
+  for (unsigned i = 0; i < REST_API_DATA_SLOTS; i++)
+    dataArray.add((unsigned)samples[i]);
+  deviceData["temperature"] = tempC;
+  deviceData["current"] = currentA;
+  if (!ok)
+    device["error"] = "No valid cell data";
 
-  off += snprintf(json + off, sizeof(json) - (size_t)off,
-                  "},\"summary\":{\"total\":1,\"success\":%u,\"failed\":%u",
-                  ok ? 1u : 0u, ok ? 0u : 1u);
-
+  JsonObject summary = multiData["summary"].to<JsonObject>();
+  summary["total"] = 1;
+  summary["success"] = ok ? 1 : 0;
+  summary["failed"] = ok ? 0 : 1;
   if (!ok)
   {
-    off += snprintf(json + off, sizeof(json) - (size_t)off,
-                    ",\"failedDevices\":[{\"id\":%u,\"error\":\"No valid cell data\"}]",
-                    devAddr);
+    JsonArray failedDevices = summary["failedDevices"].to<JsonArray>();
+    JsonObject failedDevice = failedDevices.add<JsonObject>();
+    failedDevice["id"] = devAddr;
+    failedDevice["error"] = "No valid cell data";
   }
 
-  off += snprintf(json + off, sizeof(json) - (size_t)off,
-                  "}},\"rackInfo\":{"
-                  "\"rackno\":%u,"
-                  "\"installedmodule\":1,"
-                  "\"totalbatno\":%u,"
-                  "\"rackname\":\"아이에프텍(주)\","
-                  "\"installdate\":\"2024-10-28T15:00:00.000Z\","
-                  "\"expiredate\":\"2034-10-27T15:00:00.000Z\","
-                  "\"bat_type\":\"ni-cd\","
-                  "\"nominalvoltage\":1.2,"
-                  "\"highvoltage\":%.3f,"
-                  "\"lowvoltage\":%.3f,"
-                  "\"hightemperature\":%u,"
-                  "\"highimpedance\":10,"
-                  "\"location\":\"주전산실\""
-                  "}}}",
-                  devAddr,
-                  (unsigned)cfg.installed_cells,
-                  highV, lowV,
-                  (unsigned)cfg.AlarmTemperature);
+  JsonObject rackInfo = data["rackInfo"].to<JsonObject>();
+  rackInfo["rackno"] = devAddr;
+  rackInfo["installedmodule"] = 1;
+  rackInfo["totalbatno"] = (unsigned)cfg.installed_cells;
+  rackInfo["rackname"] = "아이에프텍(주)";
+  rackInfo["installdate"] = "2024-10-28T15:00:00.000Z";
+  rackInfo["expiredate"] = "2034-10-27T15:00:00.000Z";
+  rackInfo["bat_type"] = "ni-cd";
+  rackInfo["nominalvoltage"] = 1.2f;
+  rackInfo["highvoltage"] = highV;
+  rackInfo["lowvoltage"] = lowV;
+  rackInfo["hightemperature"] = (unsigned)cfg.AlarmTemperature;
+  rackInfo["highimpedance"] = 10;
+  rackInfo["location"] = "주전산실";
 
   sendCorsHeaders();
-  s_server.send(200, "application/json", json);
+  sendJsonDocumentResponse(200, doc);
 }
 
 void restApiInit(void)
