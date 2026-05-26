@@ -60,12 +60,21 @@ async function loadBmsConfig() {
         const ampereOffset = Number(cfg.ampereOffset);
         const ampereGain = Number(cfg.ampereGain);
         const percent = Number(cfg.impedanceEepromChangePercent);
+        const autoUpdate = Number(cfg.impedanceAutoUpdateEnabled);
         const period = Number(cfg.impedanceMeasurePeriodSec);
         const readMax = Number(cfg.impedanceReadMax);
         const stableWindow = Number(cfg.impedanceStableWindow);
         const stableTol = Number(cfg.impedanceStableTolPercent);
         const postSamples = Number(cfg.impedancePostStableSamples);
         const minValidMohm = Number(cfg.impedanceMinValidMohm);
+        const impGain = Number(cfg.impedanceGain);
+        const impOffset = Number(cfg.impedanceOffsetMohm);
+        const bootRcalReal = Number(cfg.bootRcalReal);
+        const bootRcalImage = Number(cfg.bootRcalImage);
+        const bootRcalMagMohm = Number(cfg.bootRcalMagnitudeMohm);
+        const rcalReal = Number(cfg.rcalReal);
+        const rcalImage = Number(cfg.rcalImage);
+        const rcalMagMohm = Number(cfg.rcalMagnitudeMohm);
 
         const cellGainInput = document.getElementById("cellGainInput");
         const cellOffsetInput = document.getElementById("cellOffsetInput");
@@ -73,24 +82,42 @@ async function loadBmsConfig() {
         const ampereOffsetInput = document.getElementById("ampereOffsetInput");
         const ampereGainInput = document.getElementById("ampereGainInput");
         const percentInput = document.getElementById("impChangePercentInput");
+        const autoUpdateInput = document.getElementById("impAutoUpdateInput");
         const periodInput = document.getElementById("impPeriodSecInput");
         const readMaxInput = document.getElementById("impReadMaxInput");
         const stableWindowInput = document.getElementById("impStableWindowInput");
         const stableTolInput = document.getElementById("impStableTolPercentInput");
         const postSamplesInput = document.getElementById("impPostStableSamplesInput");
         const minValidInput = document.getElementById("impMinValidMohmInput");
+        const impGainInput = document.getElementById("impGainInput");
+        const impOffsetInput = document.getElementById("impOffsetMohmInput");
+        const bootRcalRealInput = document.getElementById("bootRcalRealInput");
+        const bootRcalImageInput = document.getElementById("bootRcalImageInput");
+        const bootRcalMagInput = document.getElementById("bootRcalMagMohmInput");
+        const rcalRealInput = document.getElementById("rcalRealInput");
+        const rcalImageInput = document.getElementById("rcalImageInput");
+        const rcalMagInput = document.getElementById("rcalMagMohmInput");
         if (cellGainInput && Number.isFinite(cellGain)) cellGainInput.value = String(cellGain);
         if (cellOffsetInput && Number.isFinite(cellOffset)) cellOffsetInput.value = String(cellOffset);
         if (useHoleCtInput && Number.isFinite(useHoleCt)) useHoleCtInput.value = String(useHoleCt);
         if (ampereOffsetInput && Number.isFinite(ampereOffset)) ampereOffsetInput.value = String(ampereOffset);
         if (ampereGainInput && Number.isFinite(ampereGain)) ampereGainInput.value = String(ampereGain);
         if (percentInput && Number.isFinite(percent)) percentInput.value = String(percent);
+        if (autoUpdateInput && Number.isFinite(autoUpdate)) autoUpdateInput.value = String(autoUpdate);
         if (periodInput && Number.isFinite(period)) periodInput.value = String(period);
         if (readMaxInput && Number.isFinite(readMax)) readMaxInput.value = String(readMax);
         if (stableWindowInput && Number.isFinite(stableWindow)) stableWindowInput.value = String(stableWindow);
         if (stableTolInput && Number.isFinite(stableTol)) stableTolInput.value = String(stableTol);
         if (postSamplesInput && Number.isFinite(postSamples)) postSamplesInput.value = String(postSamples);
         if (minValidInput && Number.isFinite(minValidMohm)) minValidInput.value = minValidMohm.toFixed(1);
+        if (impGainInput && Number.isFinite(impGain)) impGainInput.value = impGain.toFixed(3);
+        if (impOffsetInput && Number.isFinite(impOffset)) impOffsetInput.value = impOffset.toFixed(2);
+        if (bootRcalRealInput && Number.isFinite(bootRcalReal)) bootRcalRealInput.value = bootRcalReal.toFixed(3);
+        if (bootRcalImageInput && Number.isFinite(bootRcalImage)) bootRcalImageInput.value = bootRcalImage.toFixed(3);
+        if (bootRcalMagInput && Number.isFinite(bootRcalMagMohm)) bootRcalMagInput.value = bootRcalMagMohm.toFixed(3);
+        if (rcalRealInput && Number.isFinite(rcalReal)) rcalRealInput.value = rcalReal.toFixed(3);
+        if (rcalImageInput && Number.isFinite(rcalImage)) rcalImageInput.value = rcalImage.toFixed(3);
+        if (rcalMagInput && Number.isFinite(rcalMagMohm)) rcalMagInput.value = rcalMagMohm.toFixed(3);
 
         setText("statusText", "BMS 설정 조회 완료");
     } catch (error) {
@@ -106,27 +133,32 @@ async function saveBmsConfig() {
     const ampereOffsetRaw = Number(document.getElementById("ampereOffsetInput")?.value || "0");
     const ampereGainRaw = Number(document.getElementById("ampereGainInput")?.value || "0");
     const percentRaw = Number(document.getElementById("impChangePercentInput")?.value || "0");
+    const autoUpdateRaw = Number(document.getElementById("impAutoUpdateInput")?.value || "0");
     const periodRaw = Number(document.getElementById("impPeriodSecInput")?.value || "0");
     const readMaxRaw = Number(document.getElementById("impReadMaxInput")?.value || "0");
     const stableWindowRaw = Number(document.getElementById("impStableWindowInput")?.value || "0");
     const stableTolRaw = Number(document.getElementById("impStableTolPercentInput")?.value || "0");
     const postSamplesRaw = Number(document.getElementById("impPostStableSamplesInput")?.value || "0");
     const minValidMohmRaw = Number(document.getElementById("impMinValidMohmInput")?.value || "0");
+    const impGainRaw = Number(document.getElementById("impGainInput")?.value || "1");
+    const impOffsetRaw = Number(document.getElementById("impOffsetMohmInput")?.value || "0");
     const cellGain = clampInt(cellGainRaw, 1, 65535);
     const cellOffset = clampInt(cellOffsetRaw, -32768, 32767);
     const useHoleCt = clampInt(useHoleCtRaw, 0, 65535);
     const ampereOffset = clampInt(ampereOffsetRaw, -32768, 32767);
     const ampereGain = clampInt(ampereGainRaw, 1, 65535);
     const percent = clampInt(percentRaw, 1, 100);
+    const autoUpdate = clampInt(autoUpdateRaw, 0, 1);
     const period = clampInt(periodRaw, 1, 65535);
     const readMax = clampInt(readMaxRaw, 1, 120);
     const stableWindow = clampInt(stableWindowRaw, 2, 20);
     const stableTol = clampInt(stableTolRaw, 1, 20);
     const postSamples = clampInt(postSamplesRaw, 1, 20);
     const minValidMohm = Number.isFinite(minValidMohmRaw) ? Math.round(minValidMohmRaw * 10) / 10 : NaN;
-
-    if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000) {
-        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 주기(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000)");
+    const impGain = Number.isFinite(impGainRaw) ? Math.round(impGainRaw * 1000) / 1000 : NaN;
+    const impOffsetMohm = Number.isFinite(impOffsetRaw) ? Math.round(impOffsetRaw * 100) / 100 : NaN;
+    if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || autoUpdate === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000 || !Number.isFinite(impGain) || impGain < 0.1 || impGain > 4.0 || !Number.isFinite(impOffsetMohm) || impOffsetMohm < -327.68 || impOffsetMohm > 327.67) {
+        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 자동업데이트(0|1), 주기(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000), 임피던스게인(0.1~4.0), 임피던스오프셋(-327.68~327.67mΩ)");
         return;
     }
 
@@ -144,12 +176,15 @@ async function saveBmsConfig() {
                     ampereOffset: ampereOffset,
                     ampereGain: ampereGain,
                     impedanceEepromChangePercent: percent,
+                    impedanceAutoUpdateEnabled: autoUpdate,
                     impedanceMeasurePeriodSec: period,
                     impedanceReadMax: readMax,
                     impedanceStableWindow: stableWindow,
                     impedanceStableTolPercent: stableTol,
                     impedancePostStableSamples: postSamples,
-                    impedanceMinValidMohm: minValidMohm
+                    impedanceMinValidMohm: minValidMohm,
+                    impedanceGain: impGain,
+                    impedanceOffsetMohm: impOffsetMohm
                 }
             })
         });
@@ -255,6 +290,41 @@ async function startImpedanceBaseline() {
     } catch (error) {
         console.log(error);
         setBaselineStatus("시작 요청 네트워크 오류");
+    }
+}
+
+async function runRcalCalibration(save) {
+    const ok = window.confirm(
+        (save ? "RCAL 캘리브레이션 실행 후 EEPROM 저장합니다." : "RCAL 캘리브레이션만 실행합니다.") +
+        "\n수 초간 측정이 진행됩니다.\n\n진행하시겠습니까?"
+    );
+    if (!ok) {
+        setText("statusText", "RCAL 작업 취소됨");
+        return;
+    }
+    try {
+        setText("statusText", "RCAL 캘리브레이션 실행중...");
+        const response = await fetch(apiUrl("/api/rcal-calibration"), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ save: !!save })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+            setText("statusText", "RCAL 실패: " + (payload.error || response.status));
+            return;
+        }
+        setText(
+            "statusText",
+            "RCAL 완료: R=" + payload.real.toFixed(3) +
+            ", I=" + payload.image.toFixed(3) +
+            ", Mag=" + payload.magnitudeMohm.toFixed(3) +
+            "mΩ" + (payload.saved ? " (EEPROM 저장됨)" : "")
+        );
+    } catch (error) {
+        console.log(error);
+        setText("statusText", "RCAL 네트워크 오류");
     }
 }
 
@@ -367,7 +437,6 @@ window.addEventListener("load", async function () {
             checkImpedanceBaselineStatus();
         });
     }
-
     setBaselineStatus("대기중");
     setText("statusText", "조회 버튼으로 설정값을 읽어오세요");
 });

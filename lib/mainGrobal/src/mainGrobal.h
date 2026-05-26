@@ -83,9 +83,12 @@ typedef struct
     uint8_t VoltageFactor;
     uint8_t TemperatureFactor;
     uint16_t ImpedanceMeasurePeriod; /* 초, 0=기본 3600(1시간) */
+    uint8_t impedanceAutoUpdateEnabled; /* 0=수동(자동 EEPROM 갱신 안함), 1=자동 갱신 */
     uint16_t useHoleCt; /* FC03/FC06 reg 9: 0=센서없음, 그 외 CT 정격(A) */
     int16_t ampereOffset; /* FC03/FC06 reg 11: 전류 오프셋(0.1A 단위) */
     uint16_t ampereGain; /* FC03/FC06 reg 12: 전류 게인(1000=1.000배) */
+    uint16_t impedanceGainPermille;      /* 내부저항 전역 보정 게인(1000=1.000x) */
+    int16_t impedanceOffsetCentiMohm;    /* 내부저항 전역 보정 오프셋(0.01mOhm) */
     uint16_t cellGain; /* FC03/FC06 reg 3: VOLTAGE_GAIN_RATIO x1000 */
     int16_t cellOffset; /* FC03/FC06 reg 4: VOLTAGE_OFFSET mV */
     uint16_t year;

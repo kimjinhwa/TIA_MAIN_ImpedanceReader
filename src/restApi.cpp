@@ -30,6 +30,7 @@ static const char *const TAG = "RestApi";
 #define REST_API_HALF_SLOTS 15u
 
 static WebServer s_server(80);
+static volatile bool s_uploadInProgress = false;
 
 static bool apiRequireSession(void);
 static void sendJsonDocumentResponse(int statusCode, JsonDocument &doc);
@@ -38,6 +39,11 @@ static void sendJsonError(int statusCode, const char *errorText);
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern nvsSystemSet systemDefaultValue;
 extern LittleFileSystem lsFile;
+extern bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, float *outImage, float *outMagnitude);
+extern void AD5940_UseStoredRcalFromEeprom(void);
+extern float bootRcalVerifyRealGet(void);
+extern float bootRcalVerifyImageGet(void);
+extern float bootRcalVerifyMagnitudeGet(void);
 
 #define SESSION_COOKIE_NAME "session"
 #define SESSION_MAX_AGE_SEC (7u * 24u * 60u * 60u)
@@ -51,6 +57,10 @@ extern LittleFileSystem lsFile;
 #define BMS_IMP_READ_MAX_MAX 120u
 #define BMS_IMP_STABLE_WINDOW_DEFAULT 5u
 #define BMS_IMP_STABLE_WINDOW_MAX 20u
+#define BMS_IMP_AUTO_UPDATE_DEFAULT 0u
+#define BMS_IMP_GAIN_DEFAULT_PERMILLE 1000u
+#define BMS_IMP_GAIN_MIN_PERMILLE 100u
+#define BMS_IMP_GAIN_MAX_PERMILLE 4000u
 /** 개발 단계: 인증 전체 비활성. 배포 전 true로 복구. */
 static const bool API_REQUIRE_AUTH = false;
 
@@ -556,6 +566,47 @@ static uint16_t bmsSanitizeImpedanceMinValidDeciMohm(uint32_t deciMohm)
   return (uint16_t)deciMohm;
 }
 
+static uint16_t bmsSanitizeImpedanceGainPermille(uint32_t permille)
+{
+  if (permille < BMS_IMP_GAIN_MIN_PERMILLE || permille > BMS_IMP_GAIN_MAX_PERMILLE)
+    return (uint16_t)BMS_IMP_GAIN_DEFAULT_PERMILLE;
+  return (uint16_t)permille;
+}
+
+static int16_t impedanceCompCentiFromMohm(float mohms)
+{
+  float scaled = mohms * 100.0f;
+  if (scaled > 32767.0f)
+    scaled = 32767.0f;
+  if (scaled < -32768.0f)
+    scaled = -32768.0f;
+  return (int16_t)(scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+}
+
+static float impedanceCompMohmFromCenti(int16_t centi)
+{
+  return (float)centi / 100.0f;
+}
+
+static float removeGlobalCalibrationFromMohm(float adjustedMohm, float gain, float offsetMohm)
+{
+  if (gain < 0.0001f)
+    gain = 1.0f;
+  const float raw = (adjustedMohm - offsetMohm) / gain;
+  return raw > 0.0f ? raw : 0.0f;
+}
+
+static float applyGlobalCalibrationToMohm(float rawMohm, float gain, float offsetMohm)
+{
+  const float adjusted = rawMohm * gain + offsetMohm;
+  return adjusted > 0.0f ? adjusted : 0.0f;
+}
+
+static float rcalMagnitudeMohm(float real, float image)
+{
+  return sqrtf(real * real + image * image);
+}
+
 static void applySystemDefaultsLocked(nvsSystemSet *cfg)
 {
   if (!cfg)
@@ -599,6 +650,201 @@ static void applySystemDefaultsLocked(nvsSystemSet *cfg)
   cfg->VoltageFactor = (uint8_t)BMS_IMP_STABLE_TOL_DEFAULT_PERCENT;
   cfg->TemperatureFactor = (uint8_t)BMS_IMP_POST_SAMPLES_DEFAULT;
   cfg->RcalLoopCount = (uint16_t)BMS_IMP_MIN_VALID_DEFAULT_DECI;
+  cfg->impedanceAutoUpdateEnabled = (uint8_t)BMS_IMP_AUTO_UPDATE_DEFAULT;
+  cfg->impedanceGainPermille = (uint16_t)BMS_IMP_GAIN_DEFAULT_PERMILLE;
+  cfg->impedanceOffsetCentiMohm = 0;
+}
+
+static void handleApiRcalCalibrationPost(void)
+{
+  if (!apiRequireSession())
+    return;
+  sendCorsHeaders();
+
+  bool saveToEeprom = false;
+  if (s_server.hasArg("plain"))
+  {
+    JsonDocument reqDoc;
+    if (deserializeJson(reqDoc, s_server.arg("plain")) == DeserializationError::Ok)
+      saveToEeprom = reqDoc["save"] | false;
+  }
+
+  float real = 0.0f, image = 0.0f, magnitude = 0.0f;
+  const bool ok = runRcalCalibrationAndOptionallySave(saveToEeprom, &real, &image, &magnitude);
+  if (!ok)
+  {
+    sendJsonError(400, "rcal calibration failed");
+    return;
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["real"] = real;
+  doc["image"] = image;
+  doc["magnitudeMohm"] = magnitude;
+  doc["saved"] = saveToEeprom;
+  sendJsonDocumentResponse(200, doc);
+}
+
+static void handleApiImpedanceCompensationGet(void)
+{
+  if (!apiRequireSession())
+    return;
+  sendCorsHeaders();
+
+  nvsSystemSet cfg;
+  copySystemConfigSnapshot(&cfg);
+  uint16_t nCells = cfg.installed_cells;
+  if (nCells < 1)
+    nCells = 1;
+  if (nCells > MAX_INSTALLED_CELLS)
+    nCells = MAX_INSTALLED_CELLS;
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  JsonObject global = doc["global"].to<JsonObject>();
+  global["impedanceGain"] = (float)bmsSanitizeImpedanceGainPermille(cfg.impedanceGainPermille) / 1000.0f;
+  global["impedanceOffsetMohm"] = (float)cfg.impedanceOffsetCentiMohm / 100.0f;
+
+  JsonArray cells = doc["cells"].to<JsonArray>();
+  for (uint16_t i = 0; i < nCells; i++)
+  {
+    JsonObject item = cells.add<JsonObject>();
+    item["cellNo"] = (unsigned)(i + 1);
+    item["currentMohm"] = cellvalue[i].impendance;
+    item["baseMohm"] = impedanceCompMohmFromCenti(cfg.baseImpendance[i]);
+    item["compensationMohm"] = impedanceCompMohmFromCenti(cfg.impendanceCompensation[i]);
+  }
+  sendJsonDocumentResponse(200, doc);
+}
+
+static void handleApiImpedanceCompensationPost(void)
+{
+  if (!apiRequireSession())
+    return;
+  sendCorsHeaders();
+
+  if (!s_server.hasArg("plain"))
+  {
+    sendJsonError(400, "missing body");
+    return;
+  }
+
+  JsonDocument reqDoc;
+  if (deserializeJson(reqDoc, s_server.arg("plain")) != DeserializationError::Ok)
+  {
+    sendJsonError(400, "invalid json body");
+    return;
+  }
+
+  const int cellNo = reqDoc["cellNo"] | -1;
+  const String op = reqDoc["op"] | "set";
+
+  if (op == "setBase")
+  {
+    const float baseMohm = reqDoc["baseMohm"] | NAN;
+    if (cellNo < 1 || cellNo > MAX_INSTALLED_CELLS)
+    {
+      sendJsonError(400, "cellNo out of range(1..20)");
+      return;
+    }
+    if (!isfinite(baseMohm) || baseMohm < 0.0f || baseMohm > 327.67f)
+    {
+      sendJsonError(400, "baseMohm out of range(0.00..327.67)");
+      return;
+    }
+
+    const int16_t baseCenti = impedanceCompCentiFromMohm(baseMohm);
+    dataSyncLockSystemConfig();
+    systemDefaultValue.baseImpendance[cellNo - 1] = baseCenti;
+    const bool saved = readnWriteEEProm(true);
+    dataSyncUnlockSystemConfig();
+    if (!saved)
+    {
+      sendJsonError(500, "eeprom commit failed");
+      return;
+    }
+
+    cellvalue[cellNo - 1].baseImpendance = baseCenti;
+
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["cellNo"] = cellNo;
+    doc["baseMohm"] = impedanceCompMohmFromCenti(baseCenti);
+    sendJsonDocumentResponse(200, doc);
+    return;
+  }
+
+  const float compMohm = reqDoc["compensationMohm"] | NAN;
+  if (cellNo < 0 || cellNo > MAX_INSTALLED_CELLS)
+  {
+    sendJsonError(400, "cellNo out of range(0..20)");
+    return;
+  }
+  if (!isfinite(compMohm) || compMohm < -327.68f || compMohm > 327.67f)
+  {
+    sendJsonError(400, "compensationMohm out of range(-327.68..327.67)");
+    return;
+  }
+
+  const int16_t compCenti = impedanceCompCentiFromMohm(compMohm);
+  int16_t oldCompCenti[MAX_INSTALLED_CELLS] = {0};
+  dataSyncLockSystemConfig();
+  if (cellNo == 0)
+  {
+    for (int i = 0; i < MAX_INSTALLED_CELLS; i++)
+    {
+      oldCompCenti[i] = systemDefaultValue.impendanceCompensation[i];
+      systemDefaultValue.impendanceCompensation[i] = compCenti;
+    }
+  }
+  else
+  {
+    oldCompCenti[cellNo - 1] = systemDefaultValue.impendanceCompensation[cellNo - 1];
+    systemDefaultValue.impendanceCompensation[cellNo - 1] = compCenti;
+  }
+  const bool saved = readnWriteEEProm(true);
+  dataSyncUnlockSystemConfig();
+  if (!saved)
+  {
+    sendJsonError(500, "eeprom commit failed");
+    return;
+  }
+
+  if (cellNo == 0)
+  {
+    for (int i = 0; i < MAX_INSTALLED_CELLS; i++)
+    {
+      const float deltaMohm = impedanceCompMohmFromCenti((int16_t)(compCenti - oldCompCenti[i]));
+      const float zNow = cellvalue[i].impendance;
+      if (zNow > 0.0f)
+      {
+        const float zAdjusted = zNow + deltaMohm;
+        cellvalue[i].impendance = zAdjusted > 0.0f ? zAdjusted : 0.0f;
+      }
+      cellvalue[i].impendanceCompensation = compCenti;
+    }
+  }
+  else
+  {
+    const int idx = cellNo - 1;
+    const float deltaMohm = impedanceCompMohmFromCenti((int16_t)(compCenti - oldCompCenti[idx]));
+    const float zNow = cellvalue[idx].impendance;
+    if (zNow > 0.0f)
+    {
+      const float zAdjusted = zNow + deltaMohm;
+      cellvalue[idx].impendance = zAdjusted > 0.0f ? zAdjusted : 0.0f;
+    }
+    cellvalue[idx].impendanceCompensation = compCenti;
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["cellNo"] = cellNo;
+  doc["compensationMohm"] = impedanceCompMohmFromCenti(compCenti);
+  if (cellNo > 0)
+    doc["currentMohm"] = cellvalue[cellNo - 1].impendance;
+  sendJsonDocumentResponse(200, doc);
 }
 
 static void handleApiSystemActionPost(void)
@@ -754,6 +1000,9 @@ static void handleApiBmsConfigGet(void)
   const uint8_t stableTolPercent = bmsSanitizeImpedanceStableTolPercent(cfg.VoltageFactor);
   const uint8_t postSamples = bmsSanitizeImpedancePostSamples(cfg.TemperatureFactor);
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(cfg.RcalLoopCount);
+  const uint16_t impGainPermille = bmsSanitizeImpedanceGainPermille(cfg.impedanceGainPermille);
+  const int16_t impOffsetCenti = cfg.impedanceOffsetCentiMohm;
+  const uint8_t impAutoUpdateEnabled = cfg.impedanceAutoUpdateEnabled ? 1u : 0u;
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -770,6 +1019,15 @@ static void handleApiBmsConfigGet(void)
   bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;
   bmsControl["impedancePostStableSamples"] = (unsigned)postSamples;
   bmsControl["impedanceMinValidMohm"] = (float)minValidDeci / 10.0f;
+  bmsControl["impedanceAutoUpdateEnabled"] = (unsigned)impAutoUpdateEnabled;
+  bmsControl["impedanceGain"] = (float)impGainPermille / 1000.0f;
+  bmsControl["impedanceOffsetMohm"] = (float)impOffsetCenti / 100.0f;
+  bmsControl["bootRcalReal"] = bootRcalVerifyRealGet();
+  bmsControl["bootRcalImage"] = bootRcalVerifyImageGet();
+  bmsControl["bootRcalMagnitudeMohm"] = bootRcalVerifyMagnitudeGet();
+  bmsControl["rcalReal"] = cfg.real_Cal;
+  bmsControl["rcalImage"] = cfg.image_Cal;
+  bmsControl["rcalMagnitudeMohm"] = rcalMagnitudeMohm(cfg.real_Cal, cfg.image_Cal);
   sendJsonDocumentResponse(200, doc);
 }
 
@@ -805,6 +1063,11 @@ static void handleApiBmsConfigPost(void)
   const bool hasUseHoleCt = !cfgObj["useHoleCT"].isNull();
   const bool hasAmpOffset = !cfgObj["ampereOffset"].isNull();
   const bool hasAmpGain = !cfgObj["ampereGain"].isNull();
+  const bool hasImpAutoUpdate = !cfgObj["impedanceAutoUpdateEnabled"].isNull();
+  const bool hasImpGain = !cfgObj["impedanceGain"].isNull();
+  const bool hasImpOffset = !cfgObj["impedanceOffsetMohm"].isNull();
+  const bool hasRcalReal = !cfgObj["rcalReal"].isNull();
+  const bool hasRcalImage = !cfgObj["rcalImage"].isNull();
   uint8_t nextPercent = 0;
   uint16_t nextPeriod = 0;
   uint16_t nextReadMax = 0;
@@ -817,10 +1080,18 @@ static void handleApiBmsConfigPost(void)
   uint16_t nextUseHoleCt = 0;
   int16_t nextAmpOffset = 0;
   uint16_t nextAmpGain = 0;
+  uint8_t nextImpAutoUpdate = 0;
+  uint16_t nextImpGainPermille = 0;
+  int16_t nextImpOffsetCenti = 0;
+  float nextRcalReal = 0.0f;
+  float nextRcalImage = 0.0f;
 
   if (!hasPercent && !hasPeriod && !hasReadMax && !hasStableWindow && !hasStableTol &&
       !hasPostSamples && !hasMinValid && !hasCellGain && !hasCellOffset &&
-      !hasUseHoleCt && !hasAmpOffset && !hasAmpGain)
+      !hasUseHoleCt && !hasAmpOffset && !hasAmpGain &&
+      !hasImpAutoUpdate &&
+      !hasImpGain && !hasImpOffset &&
+      !hasRcalReal && !hasRcalImage)
   {
     sendJsonError(400, "no bmsControl fields");
     return;
@@ -1060,7 +1331,79 @@ static void handleApiBmsConfigPost(void)
     nextMinValidDeci = (uint16_t)(v * 10.0f + 0.5f);
   }
 
+  if (hasImpGain)
+  {
+    float v = 0.0f;
+    if (!parseFloatValue("impedanceGain", &v))
+    {
+      sendJsonError(400, "impedanceGain invalid");
+      return;
+    }
+    if (v < 0.1f || v > 4.0f)
+    {
+      sendJsonError(400, "impedanceGain out of range(0.1..4.0)");
+      return;
+    }
+    nextImpGainPermille = (uint16_t)(v * 1000.0f + 0.5f);
+  }
+
+  if (hasImpAutoUpdate)
+  {
+    long v = 0;
+    if (!parseLongValue("impedanceAutoUpdateEnabled", &v))
+    {
+      sendJsonError(400, "impedanceAutoUpdateEnabled invalid");
+      return;
+    }
+    if (v < 0 || v > 1)
+    {
+      sendJsonError(400, "impedanceAutoUpdateEnabled out of range(0..1)");
+      return;
+    }
+    nextImpAutoUpdate = (uint8_t)v;
+  }
+
+  if (hasImpOffset)
+  {
+    float v = 0.0f;
+    if (!parseFloatValue("impedanceOffsetMohm", &v))
+    {
+      sendJsonError(400, "impedanceOffsetMohm invalid");
+      return;
+    }
+    if (v < -327.68f || v > 327.67f)
+    {
+      sendJsonError(400, "impedanceOffsetMohm out of range(-327.68..327.67)");
+      return;
+    }
+    nextImpOffsetCenti = (int16_t)(v * 100.0f + (v >= 0.0f ? 0.5f : -0.5f));
+  }
+
+  if (hasRcalReal)
+  {
+    float v = 0.0f;
+    if (!parseFloatValue("rcalReal", &v))
+    {
+      sendJsonError(400, "rcalReal invalid");
+      return;
+    }
+    nextRcalReal = v;
+  }
+
+  if (hasRcalImage)
+  {
+    float v = 0.0f;
+    if (!parseFloatValue("rcalImage", &v))
+    {
+      sendJsonError(400, "rcalImage invalid");
+      return;
+    }
+    nextRcalImage = v;
+  }
+
   dataSyncLockSystemConfig();
+  const uint16_t oldImpGainPermille = bmsSanitizeImpedanceGainPermille(systemDefaultValue.impedanceGainPermille);
+  const int16_t oldImpOffsetCenti = systemDefaultValue.impedanceOffsetCentiMohm;
   if (hasPercent)
     systemDefaultValue.ImpedanceFactor = nextPercent;
   if (hasPeriod)
@@ -1091,6 +1434,50 @@ static void handleApiBmsConfigPost(void)
     modbusSetAmpereOffset(nextAmpOffset);
   if (hasAmpGain)
     modbusSetAmpereGain(nextAmpGain);
+  if (hasImpGain)
+    systemDefaultValue.impedanceGainPermille = bmsSanitizeImpedanceGainPermille(nextImpGainPermille);
+  if (hasImpOffset)
+    systemDefaultValue.impedanceOffsetCentiMohm = nextImpOffsetCenti;
+  if (hasImpAutoUpdate)
+    systemDefaultValue.impedanceAutoUpdateEnabled = nextImpAutoUpdate ? 1u : 0u;
+  if (hasRcalReal)
+    systemDefaultValue.real_Cal = nextRcalReal;
+  if (hasRcalImage)
+    systemDefaultValue.image_Cal = nextRcalImage;
+
+  if (hasImpGain || hasImpOffset)
+  {
+    const float oldGain = (float)oldImpGainPermille / 1000.0f;
+    const float oldOffsetMohm = (float)oldImpOffsetCenti / 100.0f;
+    const float newGain = (float)bmsSanitizeImpedanceGainPermille(systemDefaultValue.impedanceGainPermille) / 1000.0f;
+    const float newOffsetMohm = (float)systemDefaultValue.impedanceOffsetCentiMohm / 100.0f;
+
+    for (int i = 0; i < MAX_INSTALLED_CELLS; i++)
+    {
+      const float oldBaseMohm = impedanceCompMohmFromCenti(systemDefaultValue.baseImpendance[i]);
+      if (oldBaseMohm > 0.0f)
+      {
+        const float rawBaseMohm = removeGlobalCalibrationFromMohm(oldBaseMohm, oldGain, oldOffsetMohm);
+        float newBaseMohm = applyGlobalCalibrationToMohm(rawBaseMohm, newGain, newOffsetMohm);
+        int16_t newBaseCenti = impedanceCompCentiFromMohm(newBaseMohm);
+        if (newBaseCenti < 0)
+          newBaseCenti = 0;
+        systemDefaultValue.baseImpendance[i] = newBaseCenti;
+      }
+
+      const float compMohm = impedanceCompMohmFromCenti(systemDefaultValue.impendanceCompensation[i]);
+      const float currentMohm = cellvalue[i].impendance;
+      if (currentMohm > 0.0f)
+      {
+        const float oldBeforeCellComp = currentMohm - compMohm;
+        const float rawCurrentMohm = removeGlobalCalibrationFromMohm(oldBeforeCellComp, oldGain, oldOffsetMohm);
+        const float newBeforeCellComp = applyGlobalCalibrationToMohm(rawCurrentMohm, newGain, newOffsetMohm);
+        const float newCurrentMohm = newBeforeCellComp + compMohm;
+        cellvalue[i].impendance = newCurrentMohm > 0.0f ? newCurrentMohm : 0.0f;
+      }
+    }
+  }
+
   if (!readnWriteEEProm(true))
   {
     dataSyncUnlockSystemConfig();
@@ -1104,7 +1491,15 @@ static void handleApiBmsConfigPost(void)
   const uint8_t stableTolPercent = bmsSanitizeImpedanceStableTolPercent(systemDefaultValue.VoltageFactor);
   const uint8_t postSamples = bmsSanitizeImpedancePostSamples(systemDefaultValue.TemperatureFactor);
   const uint16_t minValidDeci = bmsSanitizeImpedanceMinValidDeciMohm(systemDefaultValue.RcalLoopCount);
+  const uint8_t impAutoUpdateEnabled = systemDefaultValue.impedanceAutoUpdateEnabled ? 1u : 0u;
+  const uint16_t impGainPermille = bmsSanitizeImpedanceGainPermille(systemDefaultValue.impedanceGainPermille);
+  const int16_t impOffsetCenti = systemDefaultValue.impedanceOffsetCentiMohm;
+  const float rcalReal = systemDefaultValue.real_Cal;
+  const float rcalImage = systemDefaultValue.image_Cal;
   dataSyncUnlockSystemConfig();
+
+  if (hasRcalReal || hasRcalImage)
+    AD5940_UseStoredRcalFromEeprom();
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -1121,6 +1516,15 @@ static void handleApiBmsConfigPost(void)
   bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;
   bmsControl["impedancePostStableSamples"] = (unsigned)postSamples;
   bmsControl["impedanceMinValidMohm"] = (float)minValidDeci / 10.0f;
+  bmsControl["impedanceAutoUpdateEnabled"] = (unsigned)impAutoUpdateEnabled;
+  bmsControl["impedanceGain"] = (float)impGainPermille / 1000.0f;
+  bmsControl["impedanceOffsetMohm"] = (float)impOffsetCenti / 100.0f;
+  bmsControl["bootRcalReal"] = bootRcalVerifyRealGet();
+  bmsControl["bootRcalImage"] = bootRcalVerifyImageGet();
+  bmsControl["bootRcalMagnitudeMohm"] = bootRcalVerifyMagnitudeGet();
+  bmsControl["rcalReal"] = rcalReal;
+  bmsControl["rcalImage"] = rcalImage;
+  bmsControl["rcalMagnitudeMohm"] = rcalMagnitudeMohm(rcalReal, rcalImage);
   sendJsonDocumentResponse(200, doc);
 }
 
@@ -1255,6 +1659,7 @@ static String spiffsUploadPath(const String &uploadName)
 
 static void handleUploadComplete(void)
 {
+  s_uploadInProgress = false;
   sendCorsHeaders();
   s_server.sendHeader("Connection", "close");
   s_server.send(200, "text/plain", "OK");
@@ -1266,6 +1671,7 @@ static void handleUploadBody(void)
 
   if (upload.status == UPLOAD_FILE_START)
   {
+    s_uploadInProgress = true;
     const String path = spiffsUploadPath(upload.filename);
     if (path.length() == 0)
     {
@@ -1294,6 +1700,17 @@ static void handleUploadBody(void)
     }
     ESP_LOGI(TAG, "upload end: %s (%u bytes)", upload.filename.c_str(),
              (unsigned)upload.totalSize);
+    s_uploadInProgress = false;
+  }
+  else if (upload.status == UPLOAD_FILE_ABORTED)
+  {
+    if (s_spiffsUploadFp)
+    {
+      fclose(s_spiffsUploadFp);
+      s_spiffsUploadFp = nullptr;
+    }
+    s_uploadInProgress = false;
+    ESP_LOGW(TAG, "upload aborted: %s", upload.filename.c_str());
   }
 }
 
@@ -1429,6 +1846,9 @@ static void handleApiBattery(void)
   JsonArray dataArray = deviceData["data"].to<JsonArray>();
   for (unsigned i = 0; i < REST_API_DATA_SLOTS; i++)
     dataArray.add((unsigned)samples[i]);
+  JsonArray baseImpedanceArray = deviceData["baseImpedanceMohm"].to<JsonArray>();
+  for (uint16_t i = 0; i < nCells; i++)
+    baseImpedanceArray.add(impedanceCompMohmFromCenti(cfg.baseImpendance[i]));
   deviceData["temperature"] = tempC;
   deviceData["current"] = currentA;
   if (!ok)
@@ -1477,6 +1897,8 @@ void restApiInit(void)
   s_server.on("/api/logout", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/network-config", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/bms-config", HTTP_OPTIONS, sendApiPreflight);
+  s_server.on("/api/rcal-calibration", HTTP_OPTIONS, sendApiPreflight);
+  s_server.on("/api/impedance-compensation", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/impedance-baseline/start", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/impedance-baseline/status", HTTP_OPTIONS, sendApiPreflight);
   s_server.on("/api/system-action", HTTP_OPTIONS, sendApiPreflight);
@@ -1491,6 +1913,9 @@ void restApiInit(void)
   s_server.on("/api/network-config", HTTP_POST, handleApiNetworkConfigPost);
   s_server.on("/api/bms-config", HTTP_GET, handleApiBmsConfigGet);
   s_server.on("/api/bms-config", HTTP_POST, handleApiBmsConfigPost);
+  s_server.on("/api/rcal-calibration", HTTP_POST, handleApiRcalCalibrationPost);
+  s_server.on("/api/impedance-compensation", HTTP_GET, handleApiImpedanceCompensationGet);
+  s_server.on("/api/impedance-compensation", HTTP_POST, handleApiImpedanceCompensationPost);
   s_server.on("/api/impedance-baseline/start", HTTP_POST, handleApiImpedanceBaselineStartPost);
   s_server.on("/api/impedance-baseline/status", HTTP_GET, handleApiImpedanceBaselineStatusGet);
   s_server.on("/api/system-action", HTTP_POST, handleApiSystemActionPost);
@@ -1507,6 +1932,7 @@ void restApiInit(void)
   routeSpiffsFile("/index.html", "text/html", "/spiffs/index.html");
   routeSpiffsFile("/login.html", "text/html", "/spiffs/login.html");
   routeSpiffsFile("/basicInfo.html", "text/html", "/spiffs/basicInfo.html");
+  routeSpiffsFile("/impTune.html", "text/html", "/spiffs/impTune.html");
   routeSpiffsFile("/snmpTest.html", "text/html", "/spiffs/snmpTest.html");
   routeSpiffsFile("/help.html", "text/html", "/spiffs/help.html");
   routeSpiffsFile("/index.css", "text/css", "/spiffs/index.css");
@@ -1515,6 +1941,7 @@ void restApiInit(void)
   s_server.on("/jquery.min.js", HTTP_GET, handleJqueryMinJs);
   routeSpiffsFile("/index.js", "text/javascript", "/spiffs/index.js");
   routeSpiffsFile("/basicInfo.js", "text/javascript", "/spiffs/basicInfo.js");
+  routeSpiffsFile("/impTune.js", "text/javascript", "/spiffs/impTune.js");
   routeSpiffsFile("/snmpTest.js", "text/javascript", "/spiffs/snmpTest.js");
 
   s_server.onNotFound(handleWebNotFound);
@@ -1526,6 +1953,11 @@ void restApiInit(void)
 void restApiHandle(void)
 {
   s_server.handleClient();
+}
+
+bool restApiIsUploadInProgress(void)
+{
+  return s_uploadInProgress;
 }
 
 #endif

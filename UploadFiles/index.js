@@ -58,6 +58,7 @@ function parseBatteryRows(payload) {
 
         const explicitTemp = numberOrNull(item?.data?.temperature) ?? numberOrNull(item?.temperature);
         const explicitCurrent = numberOrNull(item?.data?.current) ?? numberOrNull(item?.current);
+        const baseImpedanceArray = Array.isArray(item?.data?.baseImpedanceMohm) ? item.data.baseImpedanceMohm : [];
 
         const fallbackNo = (index === 0 && rackNo !== null) ? rackNo : Number(key);
         const deviceNo = pickDeviceNo(item?.data || item, fallbackNo);
@@ -72,8 +73,10 @@ function parseBatteryRows(payload) {
             const rawZ = numberOrNull(values[half + i]);
             rows.push({
                 deviceNo: deviceNo,
+                batteryNo: i + 1,
                 voltageV: rawV === null ? null : rawV / 1000.0,
                 impedanceMohm: rawZ === null ? null : rawZ / 100.0,
+                baseImpedanceMohm: numberOrNull(baseImpedanceArray[i]),
                 temperatureC: explicitTemp,
                 currentA: explicitCurrent
             });
@@ -88,7 +91,7 @@ function renderBatteryTable(rows) {
     if (!body) return;
 
     if (!Array.isArray(rows) || rows.length === 0) {
-        body.innerHTML = "<tr><td colspan='5'>표시할 배터리 데이터가 없습니다.</td></tr>";
+        body.innerHTML = "<tr><td colspan='6'>표시할 배터리 데이터가 없습니다.</td></tr>";
         return;
     }
 
@@ -96,9 +99,10 @@ function renderBatteryTable(rows) {
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         html += "<tr>"
-            + "<td>" + (row.deviceNo ?? "-") + "</td>"
+            + "<td>" + (row.batteryNo ?? "-") + "</td>"
             + "<td>" + formatNumber(row.voltageV, 3) + "</td>"
             + "<td>" + formatNumber(row.impedanceMohm, 2) + "</td>"
+            + "<td>" + formatNumber(row.baseImpedanceMohm, 2) + "</td>"
             + "<td>" + formatNumber(row.temperatureC, 1) + "</td>"
             + "<td>" + formatNumber(row.currentA, 1) + "</td>"
             + "</tr>";
@@ -143,6 +147,13 @@ async function loadBatterySummary() {
         const payload = await response.json();
         const rows = parseBatteryRows(payload);
         renderBatteryTable(rows);
+        const summaryTitle = document.getElementById("batterySummaryTitle");
+        if (summaryTitle) {
+            const deviceNo = rows.length > 0 ? rows[0].deviceNo : null;
+            summaryTitle.textContent = deviceNo !== null
+                ? "배터리 실시간 요약 (Device #" + deviceNo + ")"
+                : "배터리 실시간 요약";
+        }
         setText("lastUpdated", new Date().toLocaleString());
         setText("statusText", "조회 완료");
     } catch (error) {

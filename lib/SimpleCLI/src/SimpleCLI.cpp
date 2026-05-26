@@ -211,6 +211,7 @@ void cat_configCallback(cmd *cmdPtr)
 uint16_t checkAlloff(uint32_t *failedBatteryNumberH,uint32_t *failedBatteryNumberL);
 
 float AD5940_calibration(float *real , float *image);
+extern bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, float *outImage, float *outMagnitude);
 
 void startbat_configCallback(cmd *cmdPtr)
 {
@@ -513,33 +514,109 @@ void calibration_configCallback(cmd *cmdPtr){
   Command cmd(cmdPtr);
   Argument arg = cmd.getArgument(0);
   String argVal = arg.getValue();
-  simpleCli.outputStream->printf("\r\n%s",argVal.c_str());
-
-  uint8_t relayPos;
-  float real , image;
   EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
   simpleCli.outputStream->printf("\nEEPROM Real Image IMP:%6.2f\t %6.2f\t ",
       systemDefaultValue.real_Cal,systemDefaultValue.image_Cal);
+  simpleCli.outputStream->printf("\nNow Start calibrating...Wait...");
 
-  if(systemDefaultValue.runMode != 0 ){
-    simpleCli.outputStream->printf("\r\nMust run at manual mode");
+  const bool saveToEeprom = argVal.equalsIgnoreCase("save");
+  float real = 0.0f, image = 0.0f, impMagnitude = 0.0f;
+  const bool ok = runRcalCalibrationAndOptionallySave(saveToEeprom, &real, &image, &impMagnitude);
+  if (!ok)
+  {
+    simpleCli.outputStream->printf("\nRCAL calibration failed (manual mode required or EEPROM save failed)");
     return;
   }
-  simpleCli.outputStream->printf("\nNow Start calibrating...Wait...");
-  float ImpMagnitude = AD5940_calibration(&real , &image);
-  simpleCli.outputStream->printf("\nRcalVolt Real Image IMP:%6.2f\t %6.2f\t %6.2f (%dmills)",
-    real,image,ImpMagnitude);
-  if(argVal.equals("save")  ){
-    systemDefaultValue.image_Cal = image;
-    systemDefaultValue.real_Cal  = real;
-    (void)readnWriteEEProm(true);
+
+  simpleCli.outputStream->printf("\nRcalVolt Real Image IMP:%6.2f\t %6.2f\t %6.2f",
+    real,image,impMagnitude);
+  if (saveToEeprom){
     EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
     simpleCli.outputStream->printf("\nEEPROM Real Image IMP:%6.2f\t %6.2f\t ",
       systemDefaultValue.real_Cal,systemDefaultValue.image_Cal);
-    simpleCli.outputStream->printf("\r\nyou must reboot system for appply");
   } 
 
 }
+
+void impcell_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+  Argument argCell = cmd.getArgument(0);
+  Argument argComp = cmd.getArgument(1);
+  const String cellText = argCell.getValue();
+  const String compText = argComp.getValue();
+
+  if (cellText.length() == 0 || compText.length() == 0)
+  {
+    simpleCli.outputStream->printf("\r\nUsage: impcell <cellNo|0(all)> <comp_mOhm>");
+    return;
+  }
+
+  const int cellNo = cellText.toInt();
+  const float compMohm = compText.toFloat();
+  const int32_t compCenti = (int32_t)(compMohm * 100.0f + (compMohm >= 0.0f ? 0.5f : -0.5f));
+
+  if (cellNo < 0 || cellNo > MAX_INSTALLED_CELLS)
+  {
+    simpleCli.outputStream->printf("\r\ncell range error: 0..%d", MAX_INSTALLED_CELLS);
+    return;
+  }
+  if (compCenti < -32768 || compCenti > 32767)
+  {
+    simpleCli.outputStream->printf("\r\ncompensation range error: -327.68..327.67 mOhm");
+    return;
+  }
+
+  if (cellNo == 0)
+  {
+    for (int i = 0; i < MAX_INSTALLED_CELLS; i++)
+      systemDefaultValue.impendanceCompensation[i] = (int16_t)compCenti;
+    simpleCli.outputStream->printf("\r\nall cell compensation set to %.2f mOhm",
+                                   (float)compCenti / 100.0f);
+  }
+  else
+  {
+    systemDefaultValue.impendanceCompensation[cellNo - 1] = (int16_t)compCenti;
+    simpleCli.outputStream->printf("\r\ncell %d compensation set to %.2f mOhm",
+                                   cellNo, (float)compCenti / 100.0f);
+  }
+  (void)readnWriteEEProm(true);
+}
+
+void impauto_configCallback(cmd *cmdPtr)
+{
+  Command cmd(cmdPtr);
+  Argument arg = cmd.getArgument(0);
+  String argVal = arg.getValue();
+  argVal.toLowerCase();
+
+  if (argVal.length() == 0 || argVal == "status")
+  {
+    EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+    simpleCli.outputStream->printf("\r\n[impauto] %s (1=ON, 0=OFF)\r\n",
+                                   systemDefaultValue.impedanceAutoUpdateEnabled ? "on" : "off");
+    simpleCli.outputStream->printf("Usage: impauto [on|off|1|0|status]\r\n");
+    return;
+  }
+
+  uint8_t newValue = systemDefaultValue.impedanceAutoUpdateEnabled ? 1u : 0u;
+  if (argVal == "on" || argVal == "1")
+    newValue = 1u;
+  else if (argVal == "off" || argVal == "0")
+    newValue = 0u;
+  else
+  {
+    simpleCli.outputStream->printf("\r\nUsage: impauto [on|off|1|0|status]\r\n");
+    return;
+  }
+
+  systemDefaultValue.impedanceAutoUpdateEnabled = newValue;
+  (void)readnWriteEEProm(true);
+  EEPROM.readBytes(1, (byte *)&systemDefaultValue, sizeof(nvsSystemSet));
+  simpleCli.outputStream->printf("\r\n[impauto] set to %s\r\n",
+                                 systemDefaultValue.impedanceAutoUpdateEnabled ? "on" : "off");
+}
+
 void id_configCallback(cmd *cmdPtr){
   Command cmd(cmdPtr);
   Argument arg = cmd.getArgument(0);
@@ -692,6 +769,11 @@ SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize, Print *outputStre
   cmd_config = addSingleArgCmd("loglevel", loglevel_configCallback);
   cmd_config = addSingleArgCmd("id", id_configCallback);
   cmd_config = addSingleArgCmd("cal/ibration", calibration_configCallback);
+  cmd_config = addCommand("impcell", impcell_configCallback);
+  cmd_config.addPositionalArgument("cell");
+  cmd_config.addPositionalArgument("comp");
+  cmd_config = addSingleArgCmd("impauto", impauto_configCallback);
+  cmd_config.setDescription("impauto [on|off|1|0|status]\r\nControl auto EEPROM impedance update");
   cmd_config = addSingleArgCmd("bat/number", batnumber_configCallback);
   cmd_config = addSingleArgCmd("start/bat", startbat_configCallback);
   cmd_config = addCommand("imp/edance", impedance_configCallback);

@@ -48,6 +48,10 @@
 #define IMP_POST_STABLE_SAMPLES_DEFAULT 5u       // 안정 판정 후 기본 추가 평균 샘플 수
 #define IMP_POST_STABLE_SAMPLES_MAX 20u          // 안정 판정 후 추가 샘플 상한
 #define IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI 50u  // 유효 내부저항 최소값 기본치(0.1mOhm 단위, 50=5.0mOhm)
+#define IMP_GAIN_DEFAULT_PERMILLE 1000u
+#define IMP_GAIN_MIN_PERMILLE 100u
+#define IMP_GAIN_MAX_PERMILLE 4000u
+#define IMP_OFFSET_DEFAULT_CENTI_MOHM 0
 // 기본 vSPI와 일치한다
 #define VSPI_MISO   MISO  // IO19
 #define VSPI_MOSI   MOSI  // IO 23
@@ -88,6 +92,9 @@ uint16_t startBatnumber=1;
 BluetoothSerial SerialBT;
 static volatile bool s_espLogEnabled = true;
 static bool s_lastEspLogEnabledApplied = true;
+static float s_bootRcalVerifyReal = 0.0f;
+static float s_bootRcalVerifyImage = 0.0f;
+static float s_bootRcalVerifyMag = 0.0f;
 
 BatDeviceInterface batDevice;
 
@@ -97,7 +104,9 @@ BatDeviceInterface batDevice;
 float AD5940_calibration(float *real , float *image);
 float AD5940_readImpMagnitude(fImpCar_Type *pCarOut);
 void changeAD5940ToMeasurement(bool bChange);
+void AD5940_UseStoredRcalFromEeprom(void);
 uint8_t get485Address();
+bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, float *outImage, float *outMagnitude);
 
 static const char *resetReasonToString(esp_reset_reason_t reason)
 {
@@ -121,6 +130,21 @@ static const char *resetReasonToString(esp_reset_reason_t reason)
 bool espLogIsEnabled(void)
 {
   return s_espLogEnabled;
+}
+
+float bootRcalVerifyRealGet(void)
+{
+  return s_bootRcalVerifyReal;
+}
+
+float bootRcalVerifyImageGet(void)
+{
+  return s_bootRcalVerifyImage;
+}
+
+float bootRcalVerifyMagnitudeGet(void)
+{
+  return s_bootRcalVerifyMag;
 }
 
 void espLogSetEnabled(bool enabled)
@@ -321,9 +345,12 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.VoltageFactor = IMP_STABLE_REL_TOL_DEFAULT_PERCENT;   /* 안정 판단 허용치(%) */
     systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;  /* 안정 후 추가 샘플 수 */
     systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;  /* 최소 유효 mOhm (x10) */
+    systemDefaultValue.impedanceAutoUpdateEnabled = 0;                       /* 기본: 수동(자동 EEPROM 갱신 OFF) */
     systemDefaultValue.useHoleCt = 200u;   /* reg9 */
     systemDefaultValue.ampereOffset = 0;   /* reg11 */
     systemDefaultValue.ampereGain = 1000u; /* reg12 */
+    systemDefaultValue.impedanceGainPermille = IMP_GAIN_DEFAULT_PERMILLE;
+    systemDefaultValue.impedanceOffsetCentiMohm = IMP_OFFSET_DEFAULT_CENTI_MOHM;
     systemDefaultValue.cellGain = 7506u;   /* reg3 */
     systemDefaultValue.cellOffset = 356;   /* reg4 */
     eepromNvsWriteBlock(&systemDefaultValue);
@@ -346,8 +373,13 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.TemperatureFactor = IMP_POST_STABLE_SAMPLES_DEFAULT;
   if (systemDefaultValue.RcalLoopCount == 0 || systemDefaultValue.RcalLoopCount > 10000)
     systemDefaultValue.RcalLoopCount = IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;
+  if (systemDefaultValue.impedanceAutoUpdateEnabled > 1)
+    systemDefaultValue.impedanceAutoUpdateEnabled = 0;
   if (systemDefaultValue.ampereGain == 0)
     systemDefaultValue.ampereGain = 1000u;
+  if (systemDefaultValue.impedanceGainPermille < IMP_GAIN_MIN_PERMILLE ||
+      systemDefaultValue.impedanceGainPermille > IMP_GAIN_MAX_PERMILLE)
+    systemDefaultValue.impedanceGainPermille = IMP_GAIN_DEFAULT_PERMILLE;
   if (systemDefaultValue.cellGain == 0)
     systemDefaultValue.cellGain = 7506u;
   if(systemDefaultValue.startBatnumber > systemDefaultValue.installed_cells  )
@@ -379,6 +411,9 @@ bool readnWriteEEProm(bool writeMode)
   ESP_LOGI(TAG, "Impedance stable tolerance: %u%%", (unsigned)systemDefaultValue.VoltageFactor);
   ESP_LOGI(TAG, "Impedance post samples: %u", (unsigned)systemDefaultValue.TemperatureFactor);
   ESP_LOGI(TAG, "Impedance min valid: %.1f mOhm", (float)systemDefaultValue.RcalLoopCount / 10.0f);
+  ESP_LOGI(TAG, "Impedance auto update: %s", systemDefaultValue.impedanceAutoUpdateEnabled ? "ON" : "OFF");
+  ESP_LOGI(TAG, "Impedance global gain: %.3fx", (float)systemDefaultValue.impedanceGainPermille / 1000.0f);
+  ESP_LOGI(TAG, "Impedance global offset: %.2f mOhm", (float)systemDefaultValue.impedanceOffsetCentiMohm / 100.0f);
   ESP_LOGI(TAG, "Real calibration: %f", systemDefaultValue.real_Cal);
   ESP_LOGI(TAG, "Image calibration: %f", systemDefaultValue.image_Cal);
   ESP_LOGI(TAG, "Log level: %d", systemDefaultValue.logLevel);
@@ -672,6 +707,54 @@ static float impedanceMinValidMohm(void)
   return (float)deci / 10.0f;
 }
 
+static bool impedanceAutoUpdateEnabled(void)
+{
+  dataSyncLockSystemConfig();
+  const uint8_t enabled = systemDefaultValue.impedanceAutoUpdateEnabled;
+  dataSyncUnlockSystemConfig();
+  return enabled != 0;
+}
+
+static float impedanceGlobalGain(void)
+{
+  dataSyncLockSystemConfig();
+  uint16_t gainPermille = systemDefaultValue.impedanceGainPermille;
+  dataSyncUnlockSystemConfig();
+  if (gainPermille < IMP_GAIN_MIN_PERMILLE || gainPermille > IMP_GAIN_MAX_PERMILLE)
+    gainPermille = IMP_GAIN_DEFAULT_PERMILLE;
+  return (float)gainPermille / 1000.0f;
+}
+
+static float impedanceGlobalOffsetMohm(void)
+{
+  dataSyncLockSystemConfig();
+  const int16_t offsetCenti = systemDefaultValue.impedanceOffsetCentiMohm;
+  dataSyncUnlockSystemConfig();
+  return (float)offsetCenti / 100.0f;
+}
+
+static float impedanceCellCompensationMohm(unsigned idx)
+{
+  if (idx >= MAX_INSTALLED_CELLS)
+    return 0.0f;
+  dataSyncLockSystemConfig();
+  const int16_t compCenti = systemDefaultValue.impendanceCompensation[idx];
+  dataSyncUnlockSystemConfig();
+  return (float)compCenti / 100.0f;
+}
+
+static float applyImpedanceGlobalCalibration(float rawMohm)
+{
+  const float adjusted = rawMohm * impedanceGlobalGain() + impedanceGlobalOffsetMohm();
+  return adjusted > 0.0f ? adjusted : 0.0f;
+}
+
+static float applyImpedanceCellCompensation(unsigned idx, float zMohmBeforeCellComp)
+{
+  const float adjusted = zMohmBeforeCellComp + impedanceCellCompensationMohm(idx);
+  return adjusted > 0.0f ? adjusted : 0.0f;
+}
+
 static bool impSampleUsable(const fImpCar_Type *car)
 {
   if (car == NULL)
@@ -710,7 +793,7 @@ static void applyCellImpedanceFromEeprom(unsigned batNo)
   const float z = impEepromCentiToMohm(baseCenti);
   if (z <= 0.0f)
     return;
-  cellvalue[idx].impendance = z;
+  cellvalue[idx].impendance = applyImpedanceCellCompensation(idx, z);
   cellvalue[idx].baseImpendance = baseCenti;
 }
 
@@ -737,6 +820,13 @@ static bool impEepromChangeEnough(int16_t oldC, int16_t newC, float minRatio)
 /** 유효 Z 측정 성공 시: 기존 EEPROM과 설정값(%) 이상 다를 때만 저장. */
 static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
 {
+  if (!impedanceAutoUpdateEnabled())
+  {
+    if (s_espLogEnabled)
+      ESP_LOGI(TAG, "cell %u Z EEPROM keep disabled (auto update OFF)", (unsigned)batNo);
+    return false;
+  }
+
   const unsigned idx = (unsigned)(batNo - 1);
   const int16_t newC = impMohmToEepromCenti(z_mOhm);
   dataSyncLockSystemConfig();
@@ -924,7 +1014,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
 
       if (postCount > 0)
       {
-        *outZ = sum / (float)postCount;
+        const float rawZ = sum / (float)postCount;
+        const float zBeforeCellComp = applyImpedanceGlobalCalibration(rawZ);
+        *outZ = applyImpedanceCellCompensation(idx, zBeforeCellComp);
         cellvalue[idx].impendance = cellRingPush(
             s_cellImpRing[idx], &s_cellImpRingIdx[idx], &s_cellImpRingCount[idx],
             &s_cellImpRingSum[idx], *outZ);
@@ -942,7 +1034,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
                    "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
                    (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
                    postCount, i + 1 + postCount);
-        tryPersistCellImpedanceToEeprom((unsigned)batNo, cellvalue[idx].impendance);
+        tryPersistCellImpedanceToEeprom((unsigned)batNo, zBeforeCellComp);
         return true;
       }
     }
@@ -964,7 +1056,8 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
 static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
 {
   const unsigned idx = (unsigned)(batNo - 1);
-  const int16_t newC = impMohmToEepromCenti(z_mOhm);
+  const float zBeforeCellComp = z_mOhm - impedanceCellCompensationMohm(idx);
+  const int16_t newC = impMohmToEepromCenti(zBeforeCellComp);
   if (newC <= 0)
     return;
   dataSyncLockSystemConfig();
@@ -973,7 +1066,7 @@ static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
   if (s_espLogEnabled)
-    ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, z_mOhm);
+    ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, zBeforeCellComp);
 }
 
 static bool s_baselineScanRunCell = false;
@@ -1027,6 +1120,35 @@ void modbusBaselineScanPoll(void)
 
   modbusReg50BaseImpProgress = (uint16_t)(bat + 1);
   s_baselineScanRunCell = true;
+}
+
+bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, float *outImage, float *outMagnitude)
+{
+  float real = 0.0f;
+  float image = 0.0f;
+  const float magnitude = AD5940_calibration(&real, &image);
+  if (outReal)
+    *outReal = real;
+  if (outImage)
+    *outImage = image;
+  if (outMagnitude)
+    *outMagnitude = magnitude;
+
+  if (saveToEeprom)
+  {
+    dataSyncLockSystemConfig();
+    systemDefaultValue.real_Cal = real;
+    systemDefaultValue.image_Cal = image;
+    const bool saved = readnWriteEEProm(true);
+    dataSyncUnlockSystemConfig();
+    if (!saved)
+    {
+      ESP_LOGE(TAG, "RCAL calibration save failed");
+      return false;
+    }
+    ESP_LOGI(TAG, "RCAL calibration saved: real=%.2f image=%.2f", real, image);
+  }
+  return true;
 }
 
 static unsigned long now;
@@ -1121,8 +1243,14 @@ void setup()
   // AD5940_OutputSineOnCE0(1000.0f, 200.0f, 100.0f, false); // Test 3: CE0 sine, 0.6V offset, no loopback
   
 
-  float real , image;
-  float ImpMagnitude = AD5940_calibration(&real,&image);
+  float bootVerifyReal = 0.0f, bootVerifyImage = 0.0f;
+  const float bootVerifyMag = AD5940_calibration(&bootVerifyReal, &bootVerifyImage);
+  s_bootRcalVerifyReal = bootVerifyReal;
+  s_bootRcalVerifyImage = bootVerifyImage;
+  s_bootRcalVerifyMag = bootVerifyMag;
+  ESP_LOGI(TAG, "Boot RCAL verify only (not applied): R=%.3f I=%.3f Mag=%.3f mOhm",
+           bootVerifyReal, bootVerifyImage, bootVerifyMag);
+  AD5940_UseStoredRcalFromEeprom();
   resetCellMeasurementFilters();
 
   //AD5940_ShutDown();
@@ -1206,6 +1334,21 @@ void loop(void)
     vTaskDelay(100);
     return;
   }
+
+#ifdef WIFI_AP_MODE
+  if (restApiIsUploadInProgress())
+  {
+    if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
+    {
+      lastNtcReadMs = now;
+      ntcTemperatureUpdate();
+      ctCurrentUpdate();
+    }
+    dataSyncPublishCellSnapshot(cellvalue, MAX_INSTALLED_CELLS);
+    vTaskDelay(25);
+    return;
+  }
+#endif
 
 #if MEASURE_TEST_COMBINED_VZ
   if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)

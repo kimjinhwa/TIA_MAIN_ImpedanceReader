@@ -593,6 +593,16 @@ void AD5940_init(){
   //AD5940_ShutDown();
   //xTaskCreate(AD5940_Main, "AD5940_Main", 5000, NULL, 1, NULL);
 }
+
+void AD5940_UseStoredRcalFromEeprom(void)
+{
+  AppBATCfg.RcalVolt.Real = systemDefaultValue.real_Cal;
+  AppBATCfg.RcalVolt.Image = systemDefaultValue.image_Cal;
+  const float mag = AD5940_ComplexMag(&AppBATCfg.RcalVolt);
+  ESP_LOGI(TAG, "RCAL source=EEPROM (R=%.3f I=%.3f Mag=%.3f mOhm)",
+           AppBATCfg.RcalVolt.Real, AppBATCfg.RcalVolt.Image, mag);
+}
+
 float AD5940_readImpMagnitude(fImpCar_Type *pCarOut)
 {
   AppBATInit(AppBuff, APPBUFF_SIZE);
