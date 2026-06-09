@@ -1,4 +1,6 @@
-#define VERSION "1.0.16" //  내부저항 보상루팀을 설정함 
+#define VERSION "1.0.18" //  4.0 보드의 마지막 커밋이다.  
+//#define VERSION "1.0.17" //  Modbus 주소 매핑을 완료함. 
+//#define VERSION "1.0.16" //  내부저항 보상루팀을 설정함 
 //#define VERSION "1.0.15" //  내부저항 보상루팀을 설정함 
 //#define VERSION "1.0.15" //  Json 라이브러리도 바꿈 
 //  시리얼 통신이 끊어지면...전원을 외부공급르로 하니 괞찮아졌다. 

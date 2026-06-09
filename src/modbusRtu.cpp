@@ -21,10 +21,18 @@ uint16_t modbusReg50BaseImpProgress = 0;
 #define MODBUS_REG_IMP_STABLE_WINDOW 16u          // FC03/FC06: 내부저항 안정 판단 윈도우 레지스터
 #define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u  // FC03/FC06: EEPROM 갱신 임계치(%) 레지스터
 #define MODBUS_REG_IMP_PERIOD_SEC 18u             // FC03/FC06: 내부저항 측정 주기(초) 레지스터
+#define MODBUS_REG_IMP_BASE_START 80u             // FC03/FC06: 셀 기준저항(base) 시작 주소
+#define MODBUS_REG_IMP_COMP_START 96u             // FC03/FC06: 셀 보정값(compensation) 시작 주소
+#define MODBUS_REG_IMP_GAIN 116u                  // FC03/FC06: 전역 내부저항 gain(per-mille)
+#define MODBUS_REG_IMP_OFFSET 117u                // FC03/FC06: 전역 내부저항 offset(centi-mOhm, int16)
+#define MODBUS_REG_FC03_MAX MODBUS_REG_IMP_OFFSET // FC03 최대 주소
 #define MODBUS_IMP_READ_MAX_DEFAULT 60u           // 내부저항 최대 읽기 횟수 기본값
 #define MODBUS_IMP_READ_MAX_MAX 120u              // 내부저항 최대 읽기 횟수 상한
 #define MODBUS_IMP_STABLE_WINDOW_DEFAULT 5u       // 내부저항 안정 판단 윈도우 기본값
 #define MODBUS_IMP_STABLE_WINDOW_MAX 20u          // 내부저항 안정 판단 윈도우 상한
+#define MODBUS_IMP_GAIN_DEFAULT_PERMILLE 1000u
+#define MODBUS_IMP_GAIN_MIN_PERMILLE 100u
+#define MODBUS_IMP_GAIN_MAX_PERMILLE 4000u
 /** FC03/FC06 보정·설정 (저장 대상은 systemDefaultValue, 나머지는 런타임 값). */
 static struct
 {
@@ -128,6 +136,77 @@ static uint16_t impCentiToModbusReg(int16_t centi)
   return (uint16_t)min((int)centi, 65535);
 }
 
+static uint16_t modbusSanitizeImpGainPermille(uint16_t gainPermille)
+{
+  if (gainPermille < MODBUS_IMP_GAIN_MIN_PERMILLE || gainPermille > MODBUS_IMP_GAIN_MAX_PERMILLE)
+    return (uint16_t)MODBUS_IMP_GAIN_DEFAULT_PERMILLE;
+  return gainPermille;
+}
+
+static float modbusImpCentiToMohmSigned(int16_t centi)
+{
+  return (float)centi / 100.0f;
+}
+
+static int16_t modbusImpMohmToCentiClamp(float mohms)
+{
+  float scaled = mohms * 100.0f;
+  if (scaled > 32767.0f)
+    scaled = 32767.0f;
+  if (scaled < -32768.0f)
+    scaled = -32768.0f;
+  return (int16_t)(scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+}
+
+static float modbusRemoveGlobalCalFromMohm(float adjustedMohm, float gain, float offsetMohm)
+{
+  if (gain < 0.0001f)
+    gain = 1.0f;
+  const float raw = (adjustedMohm - offsetMohm) / gain;
+  return raw > 0.0f ? raw : 0.0f;
+}
+
+static float modbusApplyGlobalCalToMohm(float rawMohm, float gain, float offsetMohm)
+{
+  const float adjusted = rawMohm * gain + offsetMohm;
+  return adjusted > 0.0f ? adjusted : 0.0f;
+}
+
+static void modbusRecalcImpedanceByGlobalCalChange(uint16_t oldGainPermille, int16_t oldOffsetCenti,
+                                                    uint16_t newGainPermille, int16_t newOffsetCenti)
+{
+  const float oldGain = (float)modbusSanitizeImpGainPermille(oldGainPermille) / 1000.0f;
+  const float oldOffsetMohm = modbusImpCentiToMohmSigned(oldOffsetCenti);
+  const float newGain = (float)modbusSanitizeImpGainPermille(newGainPermille) / 1000.0f;
+  const float newOffsetMohm = modbusImpCentiToMohmSigned(newOffsetCenti);
+
+  for (int i = 0; i < MAX_INSTALLED_CELLS; i++)
+  {
+    const float oldBaseMohm = modbusImpCentiToMohmSigned(systemDefaultValue.baseImpendance[i]);
+    if (oldBaseMohm > 0.0f)
+    {
+      const float rawBaseMohm = modbusRemoveGlobalCalFromMohm(oldBaseMohm, oldGain, oldOffsetMohm);
+      const float newBaseMohm = modbusApplyGlobalCalToMohm(rawBaseMohm, newGain, newOffsetMohm);
+      int16_t newBaseCenti = modbusImpMohmToCentiClamp(newBaseMohm);
+      if (newBaseCenti < 0)
+        newBaseCenti = 0;
+      systemDefaultValue.baseImpendance[i] = newBaseCenti;
+      cellvalue[i].baseImpendance = newBaseCenti;
+    }
+
+    const float compMohm = modbusImpCentiToMohmSigned(systemDefaultValue.impendanceCompensation[i]);
+    const float currentMohm = cellvalue[i].impendance;
+    if (currentMohm > 0.0f)
+    {
+      const float oldBeforeCellComp = currentMohm - compMohm;
+      const float rawCurrentMohm = modbusRemoveGlobalCalFromMohm(oldBeforeCellComp, oldGain, oldOffsetMohm);
+      const float newBeforeCellComp = modbusApplyGlobalCalToMohm(rawCurrentMohm, newGain, newOffsetMohm);
+      const float newCurrentMohm = newBeforeCellComp + compMohm;
+      cellvalue[i].impendance = newCurrentMohm > 0.0f ? newCurrentMohm : 0.0f;
+    }
+  }
+}
+
 static uint16_t modbusSanitizeImpReadMax(uint16_t v)
 {
   if (v < 1u || v > MODBUS_IMP_READ_MAX_MAX)
@@ -185,7 +264,7 @@ static uint16_t modbusPackTotalVoltageMv(const _cell_value *cells)
 
 static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
 {
-  if (count < 51)
+  if (count <= MODBUS_REG_FC03_MAX)
     return;
   dataSyncLockSystemConfig();
 
@@ -216,6 +295,13 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
   reg[MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT] = (uint16_t)constrain((int)systemDefaultValue.ImpedanceFactor, 1, 100);
   reg[MODBUS_REG_IMP_PERIOD_SEC] = systemDefaultValue.ImpedanceMeasurePeriod == 0 ? 3600u : systemDefaultValue.ImpedanceMeasurePeriod;
   reg[MODBUS_REG_BASE_IMP_PROGRESS] = modbusReg50BaseImpProgress;
+  for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
+  {
+    reg[MODBUS_REG_IMP_BASE_START + i] = impCentiToModbusReg(systemDefaultValue.baseImpendance[i]);
+    reg[MODBUS_REG_IMP_COMP_START + i] = (uint16_t)systemDefaultValue.impendanceCompensation[i];
+  }
+  reg[MODBUS_REG_IMP_GAIN] = modbusSanitizeImpGainPermille(systemDefaultValue.impedanceGainPermille);
+  reg[MODBUS_REG_IMP_OFFSET] = (uint16_t)systemDefaultValue.impedanceOffsetCentiMohm;
   dataSyncUnlockSystemConfig();
 }
 
@@ -388,7 +474,47 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
   case MODBUS_REG_BASE_IMP_PROGRESS:
     modbusOnFc06Reg50Write(value);
     return (value == 0 || value == 1);
+  case MODBUS_REG_IMP_GAIN:
+    if (value < MODBUS_IMP_GAIN_MIN_PERMILLE || value > MODBUS_IMP_GAIN_MAX_PERMILLE)
+      return false;
+    modbusRecalcImpedanceByGlobalCalChange(systemDefaultValue.impedanceGainPermille,
+                                           systemDefaultValue.impedanceOffsetCentiMohm,
+                                           value,
+                                           systemDefaultValue.impedanceOffsetCentiMohm);
+    systemDefaultValue.impedanceGainPermille = value;
+    return true;
+  case MODBUS_REG_IMP_OFFSET:
+    modbusRecalcImpedanceByGlobalCalChange(systemDefaultValue.impedanceGainPermille,
+                                           systemDefaultValue.impedanceOffsetCentiMohm,
+                                           systemDefaultValue.impedanceGainPermille,
+                                           (int16_t)value);
+    systemDefaultValue.impedanceOffsetCentiMohm = (int16_t)value;
+    return true;
   default:
+    if (addr >= MODBUS_REG_IMP_BASE_START && addr < (MODBUS_REG_IMP_BASE_START + MODBUS_MAX_CELLS))
+    {
+      if (value > 32767u)
+        return false;
+      const uint16_t idx = (uint16_t)(addr - MODBUS_REG_IMP_BASE_START);
+      systemDefaultValue.baseImpendance[idx] = (int16_t)value;
+      cellvalue[idx].baseImpendance = (int16_t)value;
+      return true;
+    }
+    if (addr >= MODBUS_REG_IMP_COMP_START && addr < (MODBUS_REG_IMP_COMP_START + MODBUS_MAX_CELLS))
+    {
+      const uint16_t idx = (uint16_t)(addr - MODBUS_REG_IMP_COMP_START);
+      const int16_t oldComp = systemDefaultValue.impendanceCompensation[idx];
+      const int16_t newComp = (int16_t)value;
+      systemDefaultValue.impendanceCompensation[idx] = newComp;
+      cellvalue[idx].impendanceCompensation = newComp;
+      const float deltaMohm = (float)(newComp - oldComp) / 100.0f;
+      if (cellvalue[idx].impendance > 0.0f)
+      {
+        const float zAdjusted = cellvalue[idx].impendance + deltaMohm;
+        cellvalue[idx].impendance = zAdjusted > 0.0f ? zAdjusted : 0.0f;
+      }
+      return true;
+    }
     return false;
   }
 }
@@ -511,7 +637,7 @@ void modbusSetCellOffset(int16_t value)
 
 ModbusMessage FC03(ModbusMessage request)
 {
-  return modbusReadRegisters(request, READ_HOLD_REGISTER, MODBUS_REG_BASE_IMP_PROGRESS,
+  return modbusReadRegisters(request, READ_HOLD_REGISTER, MODBUS_REG_FC03_MAX,
                              modbusFillFc03Holding);
 }
 
@@ -522,55 +648,15 @@ ModbusMessage FC04(ModbusMessage request)
 
 ModbusMessage FC01(ModbusMessage request)
 {
-  uint16_t address;
   ModbusMessage response;
-  uint16_t quantity;
-  request.get(2, address);
-  request.get(4, quantity);
-  uint16_t writeAddress = (0xFFFF & address);
-
-  response.add(request.getServerID(), request.getFunctionCode());
-  ESP_LOGD("MODBUS", "FC01 address(%u) quantity(%u)", writeAddress, quantity);
-
-  if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
-  {
-    uint8_t moduleAddress = address >> 8;
-    moduleAddress -= 16;
-    writeAddress &= 0x00FF;
-    writeAddress = writeAddress - 1;
-    uint32_t token = millis();
-    ModbusMessage rc = syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress, quantity);
-
-    std::vector<uint8_t> MM_data(rc.data(), rc.data() + rc.size());
-    uint8_t relay = static_cast<uint8_t>(MM_data.size() > 3 ? MM_data[3] : 0);
-    response.add((uint8_t)1);
-    response.add(relay);
-  }
+  response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
   return response;
 }
 
 ModbusMessage FC05(ModbusMessage request)
 {
-  uint16_t address;
   ModbusMessage response;
-  uint16_t value;
-
-  request.get(2, address);
-  request.get(4, value);
-  uint16_t writeAddress = (0xFFFF & address);
-
-  response.add(request.getServerID(), request.getFunctionCode(), writeAddress);
-  response.add(value);
-
-  if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
-  {
-    uint8_t moduleAddress = address >> 8;
-    moduleAddress -= 16;
-    writeAddress &= 0x00FF;
-    writeAddress = writeAddress - 1;
-    uint32_t token = millis();
-    syncRequestCellModule(token, moduleAddress, request.getFunctionCode(), writeAddress, value);
-  }
+  response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
   return response;
 }
 
@@ -588,7 +674,12 @@ ModbusMessage FC06(ModbusMessage request)
 
   ESP_LOGD("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
 
-  if (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC || writeAddress == MODBUS_REG_BASE_IMP_PROGRESS)
+  const bool isCoreHoldingRange =
+      (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+      (writeAddress == MODBUS_REG_BASE_IMP_PROGRESS) ||
+      (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET);
+
+  if (isCoreHoldingRange)
   {
     if (writeAddress >= 5 && writeAddress <= 8)
     {
@@ -605,7 +696,8 @@ ModbusMessage FC06(ModbusMessage request)
     }
     if (writeAddress == 0 || writeAddress == 1 ||
         (writeAddress >= 2 && writeAddress <= 4) ||
-        (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC))
+        (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+        (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET))
     {
       (void)readnWriteEEProm(true);
     }
@@ -615,16 +707,6 @@ ModbusMessage FC06(ModbusMessage request)
     return response;
   }
 
-  if (writeAddress >= 0x1101 && writeAddress <= 0x2501)
-  {
-    uint8_t moduleAddress = address >> 8;
-    moduleAddress -= 16;
-    uint16_t cellAddr = (writeAddress & 0x00FF) - 1;
-    syncRequestCellModule(millis(), moduleAddress, request.getFunctionCode(), cellAddr, value);
-  }
-  else
-  {
-    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
-  }
+  response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
   return response;
 }

@@ -43,7 +43,6 @@
 #define CS_5940             GPIO_NUM_15  
 
 #define ESP_INTR_FLAG_DEFAULT 0
-#define ESP_INTR_FLAG_DEFAULT 0
 
 #define MAX_INSTALLED_CELLS 20
 
