@@ -991,14 +991,18 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     // 초기 2/3 읽기는 무시한다.
     if(i<readMax*2/3){
       ESP_LOGI(TAG, "cell %d was skipped because of warmup", batNo);
+      SerialBT.printf("cell %d was skipped because of warmup\n", batNo);
       delay(100);
       continue;
     }
 
 #if IMP_MONITOR_LOG_ALL
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
                (unsigned)batNo, i + 1, mag, car.Real, car.Image);
+      SerialBT.printf("  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
+               (unsigned)batNo, i + 1, mag, car.Real, car.Image);
+      }
 #endif
     if (!impSampleUsable(&car))
     {

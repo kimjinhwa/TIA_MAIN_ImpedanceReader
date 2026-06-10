@@ -19,7 +19,7 @@
 | 1 | 설치 셀 수 (InstalledCells) | 개 |
 | 2 | 기준전압 (Max1161_RefVolt) | mV |
 | 3 | 셀 게인 (Max1161_CellGain) | `VOLTAGE_GAIN_RATIO` ×1000 (예: 7.506 → 7506) |
-| 4 | 셀 오프셋 (Max1161_CellOffset) | `VOLTAGE_OFFSET` mV (예: 0.356V → 356) |
+| 4 | 셀 오프셋 (Max1161_CellOffset) | `VOLTAGE_OFFSET` mV (예: 0.060V → 060) |
 | 5 | 펌웨어 메이저 버전 | - |
 | 6 | 펌웨어 마이너 버전 | - |
 | 7 | 펌웨어 패치 버전 | - |
@@ -34,7 +34,23 @@
 | 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하 |
 | 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
 | 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
+| 19 ~ 20 | 부팅 RCAL Real | int32 **milli** (HI=19, LO=20). FC03 읽기 전용. 표시 = 값/1000 |
+| 21 ~ 22 | 부팅 RCAL Image | int32 milli. FC03 읽기 전용 |
+| 23 ~ 24 | 부팅 RCAL Mag (mΩ) | int32 milli. FC03 읽기 전용. 부팅 검증 측정값 |
+| 25 ~ 26 | EEPROM RCAL Real | int32 milli. FC03/FC06. 런타임 `real_Cal` |
+| 27 ~ 28 | EEPROM RCAL Image | int32 milli. FC03/FC06. 런타임 `image_Cal` |
+| 29 ~ 30 | EEPROM RCAL Mag (mΩ) | int32 milli. FC03 읽기 전용. sqrt(Real²+Image²) |
+| 31 ~ 49 | *(예약)* | - |
 | **50** | **내부저항 기준 측정 진행 상태** | FC06으로 시작; 진행 중 **1~InstalledCells**, 완료·대기 **0** (아래) |
+
+#### RCAL 인코딩 (19~30)
+
+| 항목 | 규칙 |
+|------|------|
+| 물리 단위 | Real/Image: DFT 복소 전압(웹과 동일). Mag: **mΩ** |
+| Modbus | **int32 milli** — 2워드(HI·LO). `표시값 = int32 / 1000.0` |
+| 예시 | Real -33410.0 → int32 -33410000 → HI `0xFFDF`, LO `0xE3F0` |
+| FC06 | **25~28**(EEPROM Real/Image)만 쓰기. 19~24·29~30은 읽기 전용 |
 | 80 ~ 95 | 셀 내부저항 **기준값** (`baseImpendance[]`) | mΩ ×100 (`uint16`, 소수 2자리) |
 | 96 ~ 111 | 셀 내부저항 **보정값** (`impendanceCompensation[]`) | mΩ ×100 (`int16`, 2의 보수) |
 | 116 | 내부저항 전역 Gain (`impedanceGainPermille`) | per-mille (1000=1.000배, 100~4000) |
@@ -135,6 +151,8 @@ stateDiagram-v2
 | 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하로 보정 |
 | 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
 | 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
+| 25 ~ 26 | EEPROM RCAL Real | int32 milli (HI→LO 순 FC06 개별 쓰기). 쓰기 후 EEPROM 저장·AD5940 즉시 반영 |
+| 27 ~ 28 | EEPROM RCAL Image | int32 milli |
 | **50** | **내부저항 기준 측정 시작** | **값 = 1**: 1번 셀부터 스캔·EEPROM 저장 시작, **FC03[50]**을 1→…→N으로 증가, 완료 시 펌웨어가 **0** 설정. 진행 상태는 **FC03 주소 50**으로 읽기 |
 | 80 ~ 95 | 셀 내부저항 **기준값** (`baseImpendance[]`) 개별 쓰기 | mΩ ×100 (`uint16`) |
 | 96 ~ 111 | 셀 내부저항 **보정값** (`impendanceCompensation[]`) 개별 쓰기 | mΩ ×100 (`int16`, 2의 보수) |

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <math.h>
 #include <Ads1220.h>
 #include "modbusRtu.h"
 #include "mainGrobal.h"
@@ -7,6 +8,11 @@
 #include "eepromNvs.hpp"
 #include "../Version.h"
 #include <ModbusClientRTU.h>
+
+extern float bootRcalVerifyRealGet(void);
+extern float bootRcalVerifyImageGet(void);
+extern float bootRcalVerifyMagnitudeGet(void);
+extern void AD5940_UseStoredRcalFromEeprom(void);
 
 extern uint8_t get485Address(void);
 
@@ -21,6 +27,18 @@ uint16_t modbusReg50BaseImpProgress = 0;
 #define MODBUS_REG_IMP_STABLE_WINDOW 16u          // FC03/FC06: 내부저항 안정 판단 윈도우 레지스터
 #define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u  // FC03/FC06: EEPROM 갱신 임계치(%) 레지스터
 #define MODBUS_REG_IMP_PERIOD_SEC 18u             // FC03/FC06: 내부저항 측정 주기(초) 레지스터
+#define MODBUS_REG_RCAL_BOOT_REAL_HI 19u          // FC03: 부팅 RCAL Real (int32 milli, HI word)
+#define MODBUS_REG_RCAL_BOOT_REAL_LO 20u
+#define MODBUS_REG_RCAL_BOOT_IMAGE_HI 21u         // FC03: 부팅 RCAL Image
+#define MODBUS_REG_RCAL_BOOT_IMAGE_LO 22u
+#define MODBUS_REG_RCAL_BOOT_MAG_HI 23u           // FC03: 부팅 RCAL Mag mΩ
+#define MODBUS_REG_RCAL_BOOT_MAG_LO 24u
+#define MODBUS_REG_RCAL_EEPROM_REAL_HI 25u        // FC03/FC06: EEPROM RCAL Real
+#define MODBUS_REG_RCAL_EEPROM_REAL_LO 26u
+#define MODBUS_REG_RCAL_EEPROM_IMAGE_HI 27u       // FC03/FC06: EEPROM RCAL Image
+#define MODBUS_REG_RCAL_EEPROM_IMAGE_LO 28u
+#define MODBUS_REG_RCAL_EEPROM_MAG_HI 29u         // FC03: EEPROM RCAL Mag mΩ (계산값)
+#define MODBUS_REG_RCAL_EEPROM_MAG_LO 30u
 #define MODBUS_REG_IMP_BASE_START 80u             // FC03/FC06: 셀 기준저항(base) 시작 주소
 #define MODBUS_REG_IMP_COMP_START 96u             // FC03/FC06: 셀 보정값(compensation) 시작 주소
 #define MODBUS_REG_IMP_GAIN 116u                  // FC03/FC06: 전역 내부저항 gain(per-mille)
@@ -134,6 +152,51 @@ static uint16_t impCentiToModbusReg(int16_t centi)
   if (centi <= 0)
     return 0;
   return (uint16_t)min((int)centi, 65535);
+}
+
+/** RCAL Real/Image/Mag: int32 milli 단위 (표시값 = 레지스터 / 1000.0). HI=상위16비트, LO=하위16비트. */
+static int32_t modbusFloatToMilli(float value)
+{
+  if (!isfinite(value))
+    return 0;
+  const float rounded = value * 1000.0f + (value >= 0.0f ? 0.5f : -0.5f);
+  if (rounded > 2147483647.0f)
+    return INT32_MAX;
+  if (rounded < -2147483648.0f)
+    return INT32_MIN;
+  return (int32_t)rounded;
+}
+
+static float modbusMilliToFloat(int32_t milli)
+{
+  return (float)milli / 1000.0f;
+}
+
+static void modbusPackI32Milli(uint16_t *reg, uint16_t hiAddr, int32_t milli)
+{
+  reg[hiAddr] = (uint16_t)((uint32_t)milli >> 16);
+  reg[hiAddr + 1u] = (uint16_t)((uint32_t)milli & 0xFFFFu);
+}
+
+static void modbusPackFloatMilli(uint16_t *reg, uint16_t hiAddr, float value)
+{
+  modbusPackI32Milli(reg, hiAddr, modbusFloatToMilli(value));
+}
+
+static float modbusRcalMagnitudeMohm(float real, float image)
+{
+  return sqrtf(real * real + image * image);
+}
+
+static bool modbusWriteRcalFloatPair(uint16_t addr, uint16_t word, float *target)
+{
+  int32_t milli = modbusFloatToMilli(*target);
+  if (addr == MODBUS_REG_RCAL_EEPROM_REAL_HI || addr == MODBUS_REG_RCAL_EEPROM_IMAGE_HI)
+    milli = ((int32_t)word << 16) | (milli & 0xFFFF);
+  else
+    milli = (milli & (int32_t)0xFFFF0000) | (uint16_t)word;
+  *target = modbusMilliToFloat(milli);
+  return true;
 }
 
 static uint16_t modbusSanitizeImpGainPermille(uint16_t gainPermille)
@@ -294,6 +357,13 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
   reg[MODBUS_REG_IMP_STABLE_WINDOW] = modbusSanitizeImpStableWindow(systemDefaultValue.DCVolt, reg[MODBUS_REG_IMP_READ_MAX]);
   reg[MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT] = (uint16_t)constrain((int)systemDefaultValue.ImpedanceFactor, 1, 100);
   reg[MODBUS_REG_IMP_PERIOD_SEC] = systemDefaultValue.ImpedanceMeasurePeriod == 0 ? 3600u : systemDefaultValue.ImpedanceMeasurePeriod;
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_REAL_HI, bootRcalVerifyRealGet());
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_IMAGE_HI, bootRcalVerifyImageGet());
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_MAG_HI, bootRcalVerifyMagnitudeGet());
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_EEPROM_REAL_HI, systemDefaultValue.real_Cal);
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_EEPROM_IMAGE_HI, systemDefaultValue.image_Cal);
+  modbusPackFloatMilli(reg, MODBUS_REG_RCAL_EEPROM_MAG_HI,
+                       modbusRcalMagnitudeMohm(systemDefaultValue.real_Cal, systemDefaultValue.image_Cal));
   reg[MODBUS_REG_BASE_IMP_PROGRESS] = modbusReg50BaseImpProgress;
   for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
   {
@@ -471,6 +541,12 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
       return false;
     systemDefaultValue.ImpedanceMeasurePeriod = value;
     return true;
+  case MODBUS_REG_RCAL_EEPROM_REAL_HI:
+  case MODBUS_REG_RCAL_EEPROM_REAL_LO:
+    return modbusWriteRcalFloatPair(addr, value, &systemDefaultValue.real_Cal);
+  case MODBUS_REG_RCAL_EEPROM_IMAGE_HI:
+  case MODBUS_REG_RCAL_EEPROM_IMAGE_LO:
+    return modbusWriteRcalFloatPair(addr, value, &systemDefaultValue.image_Cal);
   case MODBUS_REG_BASE_IMP_PROGRESS:
     modbusOnFc06Reg50Write(value);
     return (value == 0 || value == 1);
@@ -676,6 +752,7 @@ ModbusMessage FC06(ModbusMessage request)
 
   const bool isCoreHoldingRange =
       (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+      (writeAddress >= MODBUS_REG_RCAL_BOOT_REAL_HI && writeAddress <= MODBUS_REG_RCAL_EEPROM_MAG_LO) ||
       (writeAddress == MODBUS_REG_BASE_IMP_PROGRESS) ||
       (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET);
 
@@ -697,10 +774,13 @@ ModbusMessage FC06(ModbusMessage request)
     if (writeAddress == 0 || writeAddress == 1 ||
         (writeAddress >= 2 && writeAddress <= 4) ||
         (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+        (writeAddress >= MODBUS_REG_RCAL_EEPROM_REAL_HI && writeAddress <= MODBUS_REG_RCAL_EEPROM_IMAGE_LO) ||
         (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET))
     {
       (void)readnWriteEEProm(true);
     }
+    if (writeAddress >= MODBUS_REG_RCAL_EEPROM_REAL_HI && writeAddress <= MODBUS_REG_RCAL_EEPROM_IMAGE_LO)
+      AD5940_UseStoredRcalFromEeprom();
     dataSyncUnlockSystemConfig();
     if (needReboot)
       ESP.restart();
