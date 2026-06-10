@@ -1,4 +1,5 @@
-#define VERSION "1.0.19" //  WiFi 및 내부저항, fileupload등을 수정한다. 
+#define VERSION "1.0.20" // Test mode의 모든 기능을 완료함. 
+//#define VERSION "1.0.19" //  WiFi 및 내부저항, fileupload등을 수정한다. 
 //#define VERSION "1.0.18" //  BasicInfo Html이 삭제되어서 복구했다.
 //efine VERSION "1.0.18" //  4.0 보드의 마지막 커밋이다.  
 //#define VERSION "1.0.17" //  Modbus 주소 매핑을 완료함. 

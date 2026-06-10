@@ -200,8 +200,8 @@ static int32_t AD5940PlatformCfg(void)
 }
 
 extern AppBATCfg_Type AppBATCfg ; 
-#define ACVOLTPP_DEFAULT 200.0f
-#define DCVOLT_DEFAULT 300.0f
+#define ACVOLTPP_DEFAULT 250.0f
+#define DCVOLT_DEFAULT 250.0f
 #define ACVOLTPP_MEASURE 1.0f
 #define DCVOLT_MEASURE 200.0f
 
@@ -218,7 +218,7 @@ void AD5940BATStructInit(void)
   
   pBATCfg->FifoThresh = 2;      					/* 2 results in FIFO, real and imaginary part. */
 	
-	pBATCfg->SinFreq = 3000/3;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
+	pBATCfg->SinFreq = 1004;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
 	
 	pBATCfg->SweepCfg.SweepEn = bFALSE;			/* Set to bTRUE to enable sweep function */
 	pBATCfg->SweepCfg.SweepStart = 300.0f;		/* Start sweep at 1Hz  */
