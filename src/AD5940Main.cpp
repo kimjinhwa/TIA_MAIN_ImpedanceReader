@@ -629,6 +629,7 @@ float AD5940_readImpMagnitude(fImpCar_Type *pCarOut)
     }
   }
 
+  AD5940_AGPIOToggle(AGPIO_Pin1); /* 측정 완료 표시 (운영 경로) */
   ESP_LOGD(TAG, "readImp: FIFO ready (%dms)", (int)(millis() - startTime));
   AD5940_INTCClrFlag(AFEINTSRC_ALLINT);
   AD5940_ClrMCUIntFlag();

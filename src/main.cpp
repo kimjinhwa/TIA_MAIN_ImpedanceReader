@@ -628,6 +628,7 @@ void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
     /* 임피던스는 AD5940 실측만 링에 넣음 — initCellValue 더미값이 섞이면 1회차 Z가 깨짐 */
   }
   ESP_LOGI(TAG, "ADS1220 cell scan: %u cells, %lums", (unsigned)nCells, (unsigned long)(millis() - t0));
+  SerialBT.printf("ADS1220 cell scan: %u cells, %lums\n", (unsigned)nCells, (unsigned long)(millis() - t0));
 }
 // 인터럽트 서비스 루틴 (ISR)
 // void IRAM_ATTR handleInterrupt() {
@@ -834,8 +835,10 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
 {
   if (!impedanceAutoUpdateEnabled())
   {
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "cell %u Z EEPROM keep disabled (auto update OFF)", (unsigned)batNo);
+      SerialBT.printf("cell %u Z EEPROM keep disabled (auto update OFF)\n", (unsigned)batNo);
+    }
     return false;
   }
 
@@ -859,10 +862,13 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
     const float oldM = impEepromCentiToMohm(oldC);
     const float pct = oldM > 0.0f ? ((z_mOhm - oldM) / oldM) * 100.0f : 0.0f;
     const float minPct = (float)minPctCfg;
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG,
                "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
                (unsigned)batNo, oldM, z_mOhm, pct, minPct);
+      SerialBT.printf("cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)\n",
+               (unsigned)batNo, oldM, z_mOhm, pct, minPct);
+    }
     dataSyncUnlockSystemConfig();
     return false;
   }
@@ -871,9 +877,12 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   (void)readnWriteEEProm(true);
   dataSyncUnlockSystemConfig();
   cellvalue[idx].baseImpendance = newC;
-  if (s_espLogEnabled)
+  if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
              (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
+    SerialBT.printf("cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)\n",
+             (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
+    }
   return true;
 }
 
@@ -939,8 +948,10 @@ static float readCellVoltageForBat(int batNo)
       &s_cellVoltRingSum[idx], vAvg);
   cellvalue[idx].voltage = vFiltered;
 
-  if (s_espLogEnabled)
+  if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
+    SerialBT.printf("cell %u V=%.4f (3s)\n", (unsigned)batNo, vFiltered);
+    }
   return vFiltered;
 }
 
@@ -961,9 +972,12 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   {
     cellvalue[idx].impendance = 0.0f;
     *outZ = 0.0f;
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "cell %u Z skipped — no battery (V=%.4f < %.2f V)",
                (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
+      SerialBT.printf("cell %u Z skipped — no battery (V=%.4f < %.2f V)\n",
+               (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
+    }
     return false;
   }
 
@@ -979,9 +993,12 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   const uint8_t stableWindow = impedanceStableWindow(readMax);
 
 #if IMP_MONITOR_LOG_ALL
-  if (s_espLogEnabled)
+  if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u Z monitor start (max %u reads, window %u)",
              (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
+    SerialBT.printf("cell %u Z monitor start (max %u reads, window %u)\n",
+             (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
+    }
 #endif
 
   for (uint16_t i = 0; i < readMax; i++)
@@ -1028,7 +1045,10 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
         const float postMag = AD5940_readImpMagnitude(&postCar);
 #if IMP_MONITOR_LOG_ALL
         if (s_espLogEnabled)
+        {
           ESP_LOGI(TAG, "  cell %u Z post #%d: %.3f mOhm", (unsigned)batNo, postCount + 1, postMag);
+          SerialBT.printf("  cell %u Z post #%d: %.3f mOhm\n", (unsigned)batNo, postCount + 1, postMag);
+        }
 #endif
         if (!impSampleUsable(&postCar))
           continue;
@@ -1054,10 +1074,15 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
         cellvalue[idx].baseImpendance = systemDefaultValue.baseImpendance[idx];
 
         if (s_espLogEnabled)
+        {
           ESP_LOGI(TAG,
                    "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
                    (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
                    postCount, i + 1 + postCount);
+          SerialBT.printf("cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)\n",
+                   (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
+                   postCount, i + 1 + postCount);
+        }
         tryPersistCellImpedanceToEeprom((unsigned)batNo, zBeforeCellComp);
         return true;
       }
@@ -1091,6 +1116,7 @@ static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   cellvalue[idx].baseImpendance = newC;
   if (s_espLogEnabled)
     ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, zBeforeCellComp);
+  SerialBT.printf("cell %u Z baseline EEPROM %.2f mOhm\n", (unsigned)batNo, zBeforeCellComp);
 }
 
 static bool s_baselineScanRunCell = false;
@@ -1107,8 +1133,10 @@ void modbusOnFc06Reg50Write(uint16_t value)
   {
     modbusReg50BaseImpProgress = 1;
     s_baselineScanRunCell = true;
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "Modbus baseline Z scan start");
+      SerialBT.printf("Modbus baseline Z scan start\n");
+    }
   }
 }
 
@@ -1137,8 +1165,10 @@ void modbusBaselineScanPoll(void)
   if ((unsigned)bat >= n)
   {
     modbusReg50BaseImpProgress = 0;
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "Modbus baseline Z scan complete (%u cells)", (unsigned)n);
+      SerialBT.printf("Modbus baseline Z scan complete (%u cells)\n", (unsigned)n);
+    }
     return;
   }
 
@@ -1168,9 +1198,11 @@ bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, floa
     if (!saved)
     {
       ESP_LOGE(TAG, "RCAL calibration save failed");
+      SerialBT.printf("RCAL calibration save failed\n");
       return false;
     }
     ESP_LOGI(TAG, "RCAL calibration saved: real=%.2f image=%.2f", real, image);
+    SerialBT.printf("RCAL calibration saved: real=%.2f image=%.2f\n", real, image);
   }
   return true;
 }
@@ -1201,7 +1233,7 @@ void setup()
   ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C",
            ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f);
   ESP_LOGI(TAG, "CT current=%.1f A (AIN2=%.4f V)",
-           ctCurrentGetAmps(), packCurrentAin2Volts);
+           ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
 
@@ -1409,6 +1441,7 @@ void loop(void)
     {
       s_impedanceSessionActive = false;
       ESP_LOGI(TAG, "impedance round complete (%u cells)", (unsigned)measureActiveCellCount());
+      SerialBT.printf("impedance round complete (%u cells)\n", (unsigned)measureActiveCellCount());
     }
   }
   else
@@ -1420,6 +1453,7 @@ void loop(void)
       s_impedanceSessionActive = true;
       s_impedanceSessionCell = 1;
       ESP_LOGI(TAG, "impedance session start (period %lu s)", (unsigned long)(impPeriodMs / 1000UL));
+      SerialBT.printf("impedance session start (period %lu s)\n", (unsigned long)(impPeriodMs / 1000UL));
     }
 
     if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
@@ -1446,10 +1480,14 @@ void loop(void)
     lastNtcReadMs = now;
     ntcTemperatureUpdate();
     ctCurrentUpdate();
-    if (s_espLogEnabled)
+    if (s_espLogEnabled){
       ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
                ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
-               ctCurrentGetAmps(), packCurrentAin2Volts);
+               ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
+      SerialBT.printf("NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)\n",
+               ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
+               ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
+    }
   }
 
 #ifdef WIFI_AP_MODE

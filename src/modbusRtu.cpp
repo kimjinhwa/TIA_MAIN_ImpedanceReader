@@ -94,9 +94,8 @@ static void modbusSyncCtRatedAmpsFromReg(void)
 {
   Ads1220CtScale scale;
   Ads1220_getCtScale(&scale);
+  /* 0=센서 없음 → ctRatedAmps 0으로 두면 voltsToAmperes()가 0 반환 */
   scale.ctRatedAmps = (float)modbusUseHoleCt();
-  if (scale.ctRatedAmps <= 0.0f)
-    scale.ctRatedAmps = ADS1220_CT_RATED_AMPS_DEFAULT;
   scale.gain = 1.0f;
   Ads1220_setCtScale(&scale);
 }

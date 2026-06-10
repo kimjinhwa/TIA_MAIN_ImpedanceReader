@@ -169,7 +169,10 @@ extern int16_t packCurrentA_x10;
 extern float packCurrentAin2Volts;
 void ctCurrentInit(void);
 void ctCurrentUpdate(void);
+/** ADS1220 환산 원시 전류(A) */
 float ctCurrentGetAmps(void);
+/** Modbus FC04 reg18과 동일 — ampereOffset(0.1A) + ampereGain 적용 */
+float ctCurrentGetCalibratedAmps(void);
 #endif
 
 #endif

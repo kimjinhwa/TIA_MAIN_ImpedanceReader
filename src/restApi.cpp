@@ -1830,7 +1830,7 @@ static void handleApiBattery(void)
   const float highV = cfg.alarmHighCellVoltage / 1000.0f;
   const float lowV = cfg.alarmLowCellVoltage / 1000.0f;
   const float tempC = (float)ntcTemperatureC_x10[0] / 10.0f;
-  const float currentA = modbusHasCurrentSensor() ? ((float)packCurrentA_x10 / 10.0f) : 0.0f;
+  const float currentA = modbusHasCurrentSensor() ? ctCurrentGetCalibratedAmps() : 0.0f;
 
   JsonDocument doc;
   doc["status"] = "success";
