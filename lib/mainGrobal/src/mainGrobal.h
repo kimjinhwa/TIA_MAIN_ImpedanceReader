@@ -25,7 +25,7 @@
 #define A23S08_CS            GPIO_NUM_18 
 
 // 4.0보드에서 변경한다.
-#define PORT3               GPIO_NUM_27 // NOTUSE
+#define OPAMP_OFF_PORT               GPIO_NUM_27 // NOTUSE
 
 // 4.0보드에서 변경한다.
 //#define PORT4               GPIO_NUM_21
@@ -46,6 +46,10 @@
 
 #define MAX_INSTALLED_CELLS 20
 
+typedef enum {
+  IMPEDANCEMODE =0,  
+  VOLTAGEMODE =1
+} SetMode;
 typedef struct
 {
     char ssid[20];
@@ -142,12 +146,22 @@ extern const int measuredImpedance_2[20];
 extern const int measuredVoltage_2[20];
 
 #ifdef __cplusplus
+extern "C" {
+#endif
+void setVoltageReadMode(SetMode mode);
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
 bool readnWriteEEProm(bool writeMode);
 
 /** IN_TH1(GPIO34), IN_TH2(GPIO35) NTC — Modbus FC04 주소 16·17 (0.1°C) */
 extern int16_t ntcTemperatureC_x10[2];
 void ntcTemperatureInit(void);
 void ntcTemperatureUpdate(void);
+
+
 int16_t ntcTemperatureGetCx10(uint8_t sensorIndex);
 
 /** ADS1220 AIN2 CT 전류 — Modbus FC04 주소 18 (0.1A) */

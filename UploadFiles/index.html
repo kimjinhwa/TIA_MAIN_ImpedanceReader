@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BMS 데이타</title>
+  <script src="index.js" defer></script>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #e8eaee; color: #111; }
+    .topbar { display: flex; justify-content: flex-end; align-items: center; padding: 10px 16px; background: #263343; color: #fff; }
+    .layout { display: grid; grid-template-columns: 180px 1fr; gap: 10px; max-width: 1180px; margin: 14px auto; }
+    .sidebar { background: #c8ced6; border: 1px solid #8e99a6; padding: 10px; }
+    .sidebar h3 { margin: 0 0 10px; font-size: 14px; }
+    .sidebar ul { margin: 0; padding-left: 16px; font-size: 14px; }
+    .sidebar li { margin: 6px 0; }
+    .sidebar a { color: #111; text-decoration: none; }
+    .sidebar a.active { font-weight: bold; }
+    .panel { background: #f5f6f8; border: 1px solid #8e99a6; padding: 10px; }
+    .panel-header { background: #213a59; color: #fff; font-weight: bold; padding: 8px 10px; margin-bottom: 8px; }
+    .section-title { margin-top: 12px; margin-bottom: 6px; padding: 6px 8px; background: #d6dbe2; border: 1px solid #7e8793; font-weight: bold; text-align: center; }
+    table { width: 100%; border-collapse: collapse; background: #eef1f5; }
+    th, td { border: 1px solid #7e8793; padding: 8px; font-size: 14px; text-align: center; }
+    th { background: #e1e6ec; }
+    .btn { border: 1px solid #566273; background: #fff; padding: 6px 12px; cursor: pointer; }
+    .btn-primary { background: #2f5f8f; color: #fff; }
+    .actions-row { display: flex; justify-content: center; gap: 10px; margin-top: 14px; }
+    .meta { display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <button class="btn" id="logout">Logout</button>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>현재 상태</h3>
+      <ul>
+        <li><a href="index.html" class="active">BMS 데이타</a></li>
+        <li><a href="basicInfo.html">BMS 제어</a></li>
+        <li><a href="impTune.html">임피던스 튜닝</a></li>
+      </ul>
+    </aside>
+
+    <main class="panel">
+      <div class="panel-header">[ BMS-IMP ] BMS 데이타 (API: /api/battery)</div>
+
+      <div class="section-title" id="batterySummaryTitle">배터리 실시간 요약</div>
+      <table>
+        <thead>
+          <tr>
+            <th>배터리 NO.</th>
+            <th>전압 (V)</th>
+            <th>내부저항 (mΩ)</th>
+            <th>기준저항 (mΩ)</th>
+            <th>온도 (°C)</th>
+            <th>전류 (A)</th>
+          </tr>
+        </thead>
+        <tbody id="batteryTableBody">
+          <tr><td colspan="6">데이터 대기중...</td></tr>
+        </tbody>
+      </table>
+
+      <div class="actions-row">
+        <button class="btn btn-primary" id="refreshBtn">새로고침</button>
+      </div>
+      <div class="meta">
+        <div>마지막 갱신: <span id="lastUpdated">-</span></div>
+        <div id="statusText">대기중</div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

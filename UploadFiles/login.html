@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang='en'>
+
+<head>
+    <meta charset='UTF-8' />
+    <meta http-equiv='X-UA-Compatible' content='IE=edge' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <link rel='stylesheet' href='login.css' />
+    <title>셀 전압·내부저항 모니터링</title>
+</head>
+
+<body>
+    <div id="loginForm" method="post">
+        <h1>셀 전압·내부저항 모니터링 시스템</h1>
+        <input name="userid" placeholder="User ID" />
+        <input name="passwd" placeholder="Password" type="Password" />
+        <input type="button" class="btn" id="loginBtn" click="formLogin" value="로그인" />
+    </div>
+    <script defer>
+        // Live Server(127.0.0.1/localhost)에서 테스트할 ESP32 IP를 여기서만 바꿔주세요.
+        const TEST_ESP32_HOST = "192.168.11.1";
+        const isLocalPreview = document.location.hostname.includes("127.0.0") || document.location.hostname === "localhost";
+        const apiBaseUrl = isLocalPreview ? ("http://" + TEST_ESP32_HOST) : "";
+
+        function apiUrl(path) {
+            return apiBaseUrl + path;
+        }
+        function getCookie(name) {
+            var nameEQ = name + '=';
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = cookies[i];
+                while (cookie.charAt(0) == ' ') {
+                    cookie = cookie.substring(1, cookie.length);
+                }
+                if (cookie.indexOf(nameEQ) == 0) {
+                    return cookie.substring(nameEQ.length, cookie.length);
+                }
+            }
+            return null;
+        }
+        function setCookie(name, value, expires) {
+            var cookie =
+                name +
+                '=' +
+                value +
+                '; expires=' +
+                expires.toUTCString() +
+                '; path=/';
+            document.cookie = cookie;
+        }
+
+        document.getElementById('loginBtn').addEventListener('click', (e) => {
+            var userid = document.getElementsByName('userid')[0].value;
+            var passwd = document.getElementsByName('passwd')[0].value;
+            login(userid, passwd);
+        });
+        async function login(userid, passwd) {
+            if (!userid || !passwd) {
+                alert('사용자 이름 혹은 비밀번호가 잘못 되었습니다. \r\n다시 입력해 주세요');
+                return;
+            }
+
+            try {
+                const response = await fetch(apiUrl('/api/login'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ userid: userid, passwd: passwd })
+                });
+
+                if (!response.ok) {
+                    alert('사용자 이름 혹은 비밀번호가 잘못 되었습니다. \r\n다시 입력해 주세요');
+                    return;
+                }
+
+                const expires = new Date(new Date().getTime() + 7 * 24 * 60 * 60 * 1000);
+                setCookie('login', expires.toUTCString(), expires);
+                window.location.href = 'index.html';
+            } catch (error) {
+                console.log(error);
+                alert('로그인 요청에 실패했습니다. 네트워크를 확인해 주세요.');
+            }
+        }
+        window.onload = async function checkLoginStatus() {
+            if (isLocalPreview) {
+                var loginCookie = getCookie('login');
+                if (loginCookie && new Date() < new Date(loginCookie)) {
+                    window.location.href = 'index.html';
+                }
+                return;
+            }
+            try {
+                const response = await fetch(apiUrl('/api/me'), {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                if (response.ok) {
+                    window.location.href = 'index.html';
+                }
+            } catch (error) {
+                console.log(error);
+            }
+        }
+    </script>
+</body>
+
+</html>

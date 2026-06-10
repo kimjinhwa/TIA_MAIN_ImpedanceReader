@@ -1,0 +1,89 @@
+<script src='jquery.min.js'></script>
+<link rel="stylesheet" href="style.css" />
+<div style="max-width:420px;margin:18px auto 8px;padding:10px 12px;background:#e8f3ff;border:1px solid #9ec5f8;border-radius:6px;font-family:Arial,sans-serif;font-size:13px;line-height:1.5;">
+    <strong>안내:</strong> 이 페이지는 <strong>펌웨어(.bin)</strong> 업로드 전용입니다.<br>
+    HTML/CSS/JS 파일 여러 개를 올릴 때는 <strong>/fileUpload</strong>를 사용하세요.
+</div>
+<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>
+    <input type='file' accept='.bin' name='update' id='file' onchange='sub(this)' style=display:none>
+    <label id='file-input' for='file'> Choose file...</label>
+    <input type='submit' class=btn value='Update'>
+    <br><br>
+    <div id='prg'></div>
+    <br>
+    <div id='prgbar'>
+        <div id='bar'></div>
+    </div><br>
+</form>
+<script>
+    function sub(obj) {
+        var fileName = obj.value.split('\\\\');
+        document.getElementById('file-input').innerHTML = '   ' + fileName[fileName.length - 1];
+    };
+    $('form').submit(function (e) {
+        e.preventDefault();
+        var form = $('#upload_form')[0];
+        var data = new FormData(form);
+        $.ajax({
+            url: '/update',
+            type: 'POST',
+            data: data,
+            contentType: false,
+            processData: false,
+            xhr: function () {
+                var xhr = new window.XMLHttpRequest();
+                xhr.upload.addEventListener('progress', function (evt) {
+                    if (evt.lengthComputable) {
+                        var per = evt.loaded / evt.total;
+                        $('#prg').html('progress: ' + Math.round(per * 100) + '%');
+                        $('#bar').css('width', Math.round(per * 100) + '%');
+                    }
+                }, false);
+                return xhr;
+            },
+            success: function (d, s) {
+                console.log('success!')
+            },
+            error: function (a, b, c) {
+            }
+        });
+    });
+
+function getCookie(name) {
+    var nameEQ = name + '=';
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i];
+        while (cookie.charAt(0) == ' ') {
+            cookie = cookie.substring(1, cookie.length);
+        }
+        if (cookie.indexOf(nameEQ) == 0) {
+            return cookie.substring(nameEQ.length, cookie.length);
+        }
+    }
+    return null;
+}
+function setCookie(name, value, expires) {
+    var cookie =
+        name +
+        '=' +
+        value +
+        '; expires=' +
+        expires.toUTCString() +
+        '; path=/';
+    document.cookie = cookie;
+}
+window.onload = function () {
+    //console.log("onLoad");
+    let loginCookie = getCookie("login");
+    // If the cookie exists and is not expired, the user is logged in
+    if (loginCookie && new Date() < new Date(loginCookie)) {
+        console.log("login ok")
+    }
+    else {
+        window.location.href = "login.html";
+        return false;
+    }
+    // If the cookie does not exist or is expired, the user is not logged in
+};
+</script>

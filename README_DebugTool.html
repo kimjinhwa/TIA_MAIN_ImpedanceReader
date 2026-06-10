@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>&#xc13c;&#xc11c;&#xbaa8;&#xb4c8;&#xc744; &#xba54;&#xc778; &#xbcf4;&#xb4dc;&#xb85c; &#xc124;&#xc815;&#xd558;&#xae30;</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="센서모듈을-메인-보드로-설정하기">센서모듈을 메인 보드로 설정하기</h1>
+<ul>
+<li>modbus를 열고 1,3,4 모니터링을 연다.</li>
+<li>센서보드는 초기 부팅시 부팅 점퍼를 뺀 후 통신이 완료 되면 점퍼를 삽입한다</li>
+<li>runmode를 0으로 설정한다.</li>
+<li>메인보드에 블루투스를 연결한 후 BAT 0 으로 설정한다.</li>
+<li>메인보드의 P15relay를 00,01,10,11로 변경하여 정상적으로
+modpol에서 읽는 지를 확인한다.
+00 -&gt; 11, 01 -&gt;10, 10-&gt;01, 11-&gt;00</li>
+<li>이제 모드버스 ID를 부여하고 종료 한다.</li>
+</ul>
+<h1 id="새로운-보드의-테스트-절차">새로운 보드의 테스트 절차</h1>
+<pre><code>1. Chip ID를 정상적으로 읽는지를 확인한다. 
+2. CE단자에 SINE파가 잡히는 지를 확인한다.   
+   이때 배터리는 연결되어 있어야 한다.
+   CE와 AIN1의 파형은 동일하다.
+3. 이제 증폭기를 확인한다.    
+   AIN2와 AIN3의 파형은 출력이며 동일하다. 
+</code></pre>
+<h1 id="modbus-debug-explaination">Modbus Debug Explaination</h1>
+<ul>
+<li>Send data from PC via RS232 modbus and receive at controller</li>
+<li>Then Controller send data to ad5941 via SPI and receive data.</li>
+<li>This received data was sent to PC</li>
+</ul>
+<h2 id="controll-sub-sensor-module">Controll SUB SENSOR MODULE</h2>
+<ul>
+<li>To controll sub module via PC modbus</li>
+</ul>
+<h3 id="address-definition">Address Definition</h3>
+<ul>
+<li>
+<p>FC01 30001 : -&gt; Relay 1 Read</p>
+</li>
+<li>
+<p>FC01 30002 : -&gt; Relay 1 Read</p>
+</li>
+<li>
+<p>FC03 0x1101: -&gt; Module Address 0</p>
+</li>
+<li>
+<p>FC03 0x1201: -&gt; Module Address 1</p>
+</li>
+<li>
+<p>FC03 0x1201: -&gt; Module Address 2</p>
+</li>
+<li>
+<p>FC04 0x1101: -&gt;</p>
+<ul>
+<li>Sensor Module Device</li>
+</ul>
+</li>
+<li>
+<p>FC04 0x1102: -&gt;</p>
+<ul>
+<li>Sensor Module Device</li>
+</ul>
+</li>
+<li>
+<p>FC04 0x1103: -&gt;</p>
+<ul>
+<li>Address 0 Temperature</li>
+<li>Address 1 Modbus ID</li>
+<li>Address 2 Comm Speed</li>
+</ul>
+</li>
+<li>
+<p>FC04 30001 : -&gt; AD5941 Controll Registor</p>
+</li>
+<li>
+<p>FC05 0x1103: -&gt; Relay 1 Write</p>
+<ul>
+<li>Sensor Module Device 30000-30000= 1 Controll</li>
+</ul>
+</li>
+<li>
+<p>FC05 30002 : -&gt; Relay 1 Write</p>
+</li>
+</ul>
+<h2 id="controll-ad5941">Controll AD5941</h2>
+<h3 id="using-modbus">Using modbus</h3>
+<ul>
+<li>For controll AD5941 via modbus</li>
+<li>FC03 : Read Register at ad4941
+<strong>Most High Address</strong> REG_AFE_ADCFILTERCFG: 0x00004010<br>
+<strong>Most Low Address</strong>  REG_AFECRC_CTL: 0x00001000</li>
+<li>address start from 30001 or 40001</li>
+</ul>
+<h3 id="modbus-address-function-3-holding-register">Modbus Address function 3 Holding Register</h3>
+<ul>
+<li>read 0...1 (register 40001 to 40002)
+<ul>
+<li>send    01 03 00 00 00 02 C4 0B</li>
+<li>receive 01 03 04 00 06 00 05 DA 31</li>
+</ul>
+</li>
+</ul>
+<h3 id="modbus-address-function-4-input-register">Modbus Address function 4 Input Register</h3>
+<ul>
+<li>read 0...1 (register 30001 to 30002)
+<ul>
+<li>send    01 04 00 00 00 02 71 CB</li>
+<li>receive 01 04 04 00 06 00 05 DB 86</li>
+</ul>
+</li>
+</ul>
+<h3 id="modbus-fc06">MODBUS FC06</h3>
+<ul>
+<li>FC06을 사용하여 보정값을 메모리에 저장한다.</li>
+</ul>
+<h2 id="bluetooth-command">BLUETOOTH COMMAND</h2>
+<pre><code>SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize,Print *outputStream ) : commandQueueSize(commandQueueSize), errorQueueSize(errorQueueSize) {
+  this-&gt;inputStream = &amp;Serial;
+  Command cmd_config = addCommand(&quot;ls&quot;,ls_configCallback);
+  cmd_config.setDescription(&quot; File list \r\n &quot;);
+  cmd_config =  addSingleArgCmd(&quot;cat&quot;, cat_configCallback);
+  cmd_config = addSingleArgCmd(&quot;rm&quot;, rm_configCallback);
+  cmd_config = addSingleArgCmd(&quot;format&quot;, format_configCallback);
+  cmd_config = addCommand(&quot;time&quot;, time_configCallback);
+  cmd_config.addArgument(&quot;y/ear&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;mo/nth&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;d/ay&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;h/our&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;m/inute&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;s/econd&quot;,&quot;&quot;);
+  cmd_config.setDescription(&quot; Get Time or set \r\n time -y 2024 or time -M 11,..., Month is M , minute is m &quot;);
+  cmd_config = addCommand(&quot;df&quot;, df_configCallback);
+  cmd_config = addSingleArgCmd(&quot;reboot&quot;, reboot_configCallback);
+
+  cmd_config = addCommand(&quot;r/elay&quot;, relay_configCallback);
+  cmd_config.addArgument(&quot;s/el&quot;,&quot;&quot;);
+  cmd_config.addArgument(&quot;t/est&quot;,&quot;&quot;);
+  cmd_config.addFlagArg(&quot;off&quot;);
+  cmd_config.setDescription(&quot;relay on off controll \r\n relay -s/el [1] [-off]&quot;);
+  cmd_config = addSingleArgCmd(&quot;mode&quot;, mode_configCallback);
+  cmd_config = addSingleArgCmd(&quot;id&quot;, id_configCallback);
+  cmd_config = addSingleArgCmd(&quot;cal/ibration&quot;, calibration_configCallback);
+  cmd_config = addSingleArgCmd(&quot;bat/number&quot;, batnumber_configCallback);
+  cmd_config = addCommand(&quot;imp/edance&quot;, impedance_configCallback);
+  cmd_config = addSingleArgCmd(&quot;temp/erature&quot;, temperature_configCallback);
+  cmd_config = addSingleArgCmd(&quot;mod/uledid&quot;, moduleid_configCallback);
+
+  cmd_config = addCommand(&quot;writecellLog&quot;,writeCellLog_configCallback);
+  cmd_config = addCommand(&quot;readcellLog&quot;,readCellLog_configCallback);
+  cmd_config = addCommand(&quot;wrm&quot;,measuredvalue_configCallback);
+  cmd_config.addPositionalArgument(&quot;num&quot;);
+  cmd_config.addPositionalArgument(&quot;imp&quot;);
+  cmd_config.addPositionalArgument(&quot;vol&quot;);
+  cmd_config.setDescription(&quot;\n \
+    Input measured impdance and voltage compansation value\n  \
+    Usage : wrm cellno imp vol \n\
+  &quot;);
+
+  cmd_config = addCommand(&quot;offset&quot;,offset_configCallback);
+  cmd_config.addFlagArgument(&quot;i&quot;); //impedance
+  cmd_config.addFlagArgument(&quot;ia&quot;); //impedance
+  cmd_config.addFlagArgument(&quot;v&quot;); //voltage
+  cmd_config.addFlagArgument(&quot;va&quot;); //voltage
+  cmd_config.addFlagArgument(&quot;vv&quot;); //voltage
+  cmd_config.addPositionalArgument(&quot;num&quot;);
+  cmd_config.addPositionalArgument(&quot;value&quot;);
+  cmd_config.setDescription(&quot;\nFor impdance and voltage compansation value\n  \
+    Usage: offset [-i (cellnumber) (value)] [-v (cellnumber) (value)]\n    \
+                [-ia][-va]  \
+           flag: -ia  0 [value] [ set all offset value set to samevalue to given impedance value]\n   \
+           flag: -iv  [ for set to samevalue to First voltage value]\n     \
+           For set IMP input, value is 100 times.\n, \
+           For set Vol input, value is for use offset. So not multiples.\n, \
+             &quot;);
+  simpleCli.setOnError(errorCallback);
+  cmd_config= addCommand(&quot;help&quot;,help_Callback);
+}
+</code></pre>
+<h3 id="offset">offset</h3>
+<h4 id="offset-----ia-cellno-value---va--cellno-value------i--cellno-value-">offset    [-ia cellno value ] [-va  cellno value ]    [-i  cellno value ]</h4>
+<ul>
+<li>
+<p>[-ia cellno value ] 임피던스에 대한 옵셋을 맞춘다.</p>
+<ul>
+<li>cellno : 셀번호 1번부터시작한다.<br>
+0 이 주어지면 모든셀에 대하여 적용한다.
+<ul>
+<li>value<br>
+systemDefaultValue.impendanceCompensation[i]의
+값에 주어진 값을 += 한다.<pre><code> cellvalue[i].impendance = cellvalue[i].impendance +   systemDefaultValue.impendanceCompensation[i] / 100.f;   
+</code></pre>
+</li>
+</ul>
+따라서 Value는 + - 값이다.
+값으로 준다.</li>
+</ul>
+</li>
+<li>
+<p>[-va  cellno value ]  전압에 대한 옵셋을 맞춘다.</p>
+<ul>
+<li>cellno : 셀번호 1번부터시작한다.<br>
+0 이 주어지면 모든셀에 대하여 적용한다.</li>
+<li>value<br>
+systemDefaultValue.voltageCompensation[i]의
+값에 주어진 값을 += 한다.<pre><code> systemDefaultValue.voltageCompensation[i] += value 
+</code></pre>
+</li>
+</ul>
+<p>따라서 Value는 1/100로 적용하기 때문에 100을 곱한
+값으로 준다.</p>
+</li>
+<li>
+<p>[-i cellno value ] ia와 동일하나 +=이 아닌 =를 사용한다.</p>
+<pre><code>cellvalue[i].impendance = cellvalue[i].impendance + systemDefaultValue.impendanceCompensation[i] / 100.f;
+</code></pre>
+</li>
+<li>
+<p>[-v cellno value ] va와 동일하나 +=이 아닌 =를 사용한다.</p>
+<pre><code>  systemDefaultValue.voltageCompensation[i] = value; // cellvalue[0].voltage - cellvalue[i].voltage;
+  cellvalue[number - 1].voltage= cellvalue[number - 1].voltage+ systemDefaultValue.voltageCompensation[number - 1];
+</code></pre>
+</li>
+<li>
+<p>[-vv cellno value ] 입력한 값으로 옵셋을 맞추어 주는 옵션이다.<br>
+계산을 쉽하기 해 주기 위한 방법이다.<br>
+첫번째는 셀번호를 두번째는 원하는 전압값을 기록한다</p>
+</li>
+</ul>
+<pre><code>   float gapVoltage = fvalue - cellvalue[number-1].voltage ;
+   int voloffset = (int)(gapVoltage /0.005);
+   systemDefaultValue.voltageCompensation[number - 1] = voloffset;
+   //voltageCompensation값은 아래와 같이 adcReading Offset에 사용된다.
+   systemDefaultValue.voltageCompensation[number - 1] = voloffset;
+ uint32_t voltage = esp_adc_cal_raw_to_voltage((uint32_t)batVoltageAdcValue , &amp;adc_chars);
+</code></pre>
+<h1 id="mpower-01">mpower [0][1]</h1>
+<ul>
+<li>외부전원을 모듈에 인가하는 15V전원 릴레이 스위치를 끄거나 켠다.</li>
+</ul>
+<h1 id="relay--s-cell-no--off">relay -s [Cell no] -off</h1>
+<ul>
+<li>relay -s [Cell no] -off
+<ul>
+<li>off : check if all cell is offed</li>
+<li>Cell no : 0 All Off,
+number : Set Relay On the number and +1 relay on</li>
+</ul>
+</li>
+<li>cal/ibration 기준 임피던스를 구한다.
+cal save : 값을 읽고 저장한다.
+cal save 캘리브레이션 된 값을 EEPROM에 저장한다</li>
+<li>mode  자동으로 임피던스를 읽을 것인지 아닌지를 결정한다.
+Calibration을 수행하기 위해서는 이것이 수동으로 설정 되어 있어야 한다.
+<ul>
+<li>mode 0 :수동</li>
+<li>mode 1 : 전압만 자동</li>
+<li>mode 3 : 전압과 임피던스 자동</li>
+</ul>
+</li>
+<li>bat/number [40]: 설치되어있는 배터리숫자를 기록한다</li>
+<li>temp/erature : 전체의 온도를 읽는 루틴이다.</li>
+<li>time : 현재의 시간을 표시한다.
+time -y , -mo , -d , -h , -m , -s</li>
+<li>df 현재 시스템의 파일시스템 상태를 보여준다.</li>
+<li>id : mode bus id를 보여준다. 변경시에는 뒤에 원하는 :ID를 적는다.</li>
+<li>offset -i -v num value
+임피던스 옵셋을 변경하고자 하면
+offset -i 10 100을 적어 넣으면 1/100이 반영되며, -값은 &quot;-100&quot; 과 같이 적는다.</li>
+</ul>
+<h3 id="debugging-info">Debugging Info.</h3>
+<ul>
+<li>RTC Battery +, - Terminal SWAP</li>
+<li>USB-C type VCC Jumper to +5V and P5V</li>
+<li>RS통신 칩을 전이중 방식으로 사용되었기 때문에 칩을 교체 하였다.
+<ul>
+<li>회로도의 수정이 필요하다.</li>
+</ul>
+</li>
+</ul>
+<h3 id="hardware-design">Hardware Design</h3>
+<ul>
+<li>내부의 LCD와 셀의 온도및 릴레이를 위해 사용한다.
+<ul>
+<li>Serial1.begin(115200,SERIAL_8N1,26,22);</li>
+</ul>
+</li>
+<li>외부 485통신에 사용한다.
+<ul>
+<li>Serial2.begin(115200,SERIAL_8N1,18,19);</li>
+</ul>
+</li>
+<li>LCD와 셀의 통신을 선택하게 위형 2개의 GPIO를 사용한다.
+<ul>
+<li>IO 23 UAD1</li>
+<li>IO 2  UAD2</li>
+</ul>
+</li>
+<li><strong>문제가 발생함.</strong>  온도가 자꾸 올라간다.</li>
+</ul>
+<h3 id="lcd-모드버스-프로그램-시작">LCD 모드버스 프로그램 시작.</h3>
+<pre><code>1. PC와의 에뮬레이션으로 시작한다. 
+2. PC쪽 프로그램은 Modscan을 사용하여 프로그램한다. 
+3. Address는 나중에 사용되는 External RS485와 같은 번지를 사용한다.
+4. 셀과의 통신이 항상 우선시 되므로 LCD에서는  매초 마다 폴링을 하여 요청이 있는지를 확인한다. 
+5. Device는 셀과의 통신이 완료 되면 LCD수신모드로 들어간다.(LCD에게는 Agent 이기 때문이다.)
+</code></pre>
+
+            
+            
+        </body>
+        </html>

@@ -1,0 +1,259 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>도움말 · 사용 설명서</title>
+  <style>
+    :root { --r: 12px; --r-sm: 8px; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #e8eaee; color: #111; }
+    .topbar {
+      display: flex; justify-content: flex-end; align-items: center; padding: 10px 16px;
+      background: #263343; color: #fff; border-radius: 0 0 var(--r) var(--r); overflow: hidden;
+    }
+    .topbar .actions button { margin-left: 8px; }
+    .layout { display: grid; grid-template-columns: 200px 1fr; gap: 12px; max-width: 1180px; margin: 14px auto; align-items: start; }
+    .sidebar { background: #c8ced6; border: 1px solid #8e99a6; padding: 10px; border-radius: var(--r); overflow: hidden; }
+    .sidebar h3 { margin: 0 0 10px; font-size: 14px; }
+    .sidebar ul { margin: 0; padding-left: 16px; font-size: 13px; }
+    .sidebar li { margin: 6px 0; }
+    .sidebar .sidebar-help-sub { margin: 4px 0 2px 0; padding-left: 14px; list-style-type: circle; font-size: 12px; }
+    .sidebar .sidebar-help-sub li { margin: 4px 0; }
+    .sidebar a { color: #111; text-decoration: none; cursor: pointer; }
+    .sidebar a.active { font-weight: bold; }
+    .panel {
+      background: #f5f6f8; border: 1px solid #8e99a6; padding: 10px 14px;
+      border-radius: var(--r); overflow: hidden;
+    }
+    .panel-header {
+      background: #213a59; color: #fff; font-weight: bold; padding: 8px 10px; margin-bottom: 12px;
+      border-radius: var(--r-sm);
+    }
+    .manual-toc { margin: 0 0 14px; padding: 10px 12px; background: #eef1f5; border: 1px solid #7e8793; border-radius: var(--r-sm); font-size: 13px; line-height: 1.6; }
+    .manual-toc a { color: #1f5fbf; }
+    h2 { margin: 18px 0 10px; font-size: 17px; color: #213a59; scroll-margin-top: 12px; }
+    h3 { margin: 14px 0 8px; font-size: 15px; color: #263343; scroll-margin-top: 12px; }
+    .help-block {
+      background: #eef1f5; border: 1px solid #7e8793; padding: 10px 12px; margin-bottom: 12px; line-height: 1.55;
+      border-radius: var(--r-sm); font-size: 14px;
+    }
+    .help-block a { color: #1f5fbf; }
+    table.doc { width: 100%; border-collapse: collapse; background: #fff; font-size: 12px; margin: 8px 0 14px; }
+    table.doc th, table.doc td { border: 1px solid #7e8793; padding: 6px 8px; vertical-align: top; }
+    table.doc th { background: #d6dbe2; text-align: left; }
+    table.doc code { font-family: Consolas, monospace; font-size: 11px; word-break: break-all; user-select: all; }
+    ul.bul { margin: 6px 0; padding-left: 20px; line-height: 1.55; }
+    .btn { border: 1px solid #566273; background: #fff; padding: 6px 10px; cursor: pointer; border-radius: var(--r-sm); }
+    .note { font-size: 12px; color: #333; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="actions">
+      <button class="btn" id="logout">Logout</button>
+    </div>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>현재 상태</h3>
+      <ul>
+        <li><a href="basicInfo.html">BMS 데이터</a></li>
+        <li><a href="basicInfo.html">BMS 운전상태</a></li>
+      </ul>
+      <h3 style="margin-top:16px;">네트워크 구성</h3>
+      <ul>
+        <li><a href="index.html">네트워크 구성</a></li>
+        <li><a href="snmpTest.html">SNMP TEST</a></li>
+        <li>
+          <a href="help.html" class="active">도움말</a>
+          <ul class="sidebar-help-sub">
+            <li><a href="#ipfinder">IP Finder (PC)</a></li>
+            <li><a href="#web-pages">웹 화면 안내</a></li>
+            <li><a href="#oid-sun">OID · 아이에프텍(참고)</a></li>
+            <li><a href="#oid-kepco">OID · 한국전력</a></li>
+            <li><a href="#oid-road">OID · 한국도로공사</a></li>
+            <li><a href="#external-tools">외부 MIB 도구</a></li>
+          </ul>
+        </li>
+      </ul>
+    </aside>
+    <main class="panel">
+      <div class="panel-header">도움말 · 사용 설명서</div>
+
+      <nav class="manual-toc">
+        <strong>빠른 이동:</strong>
+        <a href="#ipfinder">IP Finder</a> ·
+        <a href="#web-pages">웹 화면</a> ·
+        <a href="#oid-sun">아이에프텍 OID</a> ·
+        <a href="#oid-kepco">한국전력 OID</a> ·
+        <a href="#oid-road">도로공사 OID</a><br />
+        <span class="note">ESP32 플래시용량 절약을 위해 본 페이지에는 이미지를 넣지 않습니다. 그림이 필요하면 저장소 <code>doc/사용설명서/README.md</code> 를 참고하세요.</span>
+      </nav>
+
+      <!-- 1. IP Finder -->
+      <h2 id="ipfinder">1. IP Finder (PC 프로그램)</h2>
+      <div class="help-block">
+        PC에서 실행하는 탐색 도구입니다. 저장소 <code>python/SnmpFinder.py</code> 를 실행하거나, 빌드된 실행 파일로 구동합니다.
+        동일 LAN에서 <strong>UDP 브로드캐스트(포트 1234)</strong>로 모듈을 찾고 네트워크·TRAP·웹 설정을 반영할 수 있습니다.
+      </div>
+      <table class="doc">
+        <thead><tr><th>구역</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td>네트워크 정보</td><td>IP, 게이트웨이, 서브넷, MAC, VERSION 확인·편집(VERSION은 읽기 위주).</td></tr>
+          <tr><td>TRAP · 웹 서비스</td><td>TRAP/WEB 사용 여부, TRAP IP(최대 5곳), 하단 <strong>트랩 테스트</strong>·<strong>설정 적용</strong>·<strong>검색</strong>.</td></tr>
+          <tr><td>발견된 장비</td><td>브로드캐스트 응답으로 찾은 목록. 행을 선택하면 상단 필드에 값이 채워집니다.</td></tr>
+        </tbody>
+      </table>
+      <ul class="bul">
+        <li><strong>검색:</strong> 디스커버리 메시지를 브로드캐스트하여 모듈을 찾습니다.</li>
+        <li><strong>설정 적용:</strong> 입력한 네트워크 및 TRAP/웹 옵션을 모듈에 전달합니다(MAC 등 대상 지정).</li>
+        <li><strong>트랩 테스트:</strong> TRAP 통신 확인용 테스트를 보냅니다.</li>
+      </ul>
+
+      <!-- 2. Web -->
+      <h2 id="web-pages">2. 웹 화면 (모듈 내장 페이지)</h2>
+      <p class="note">브라우저로 접속합니다. 로그아웃은 우측 상단 <strong>Logout</strong>.</p>
+
+      <h3 id="page-login"><code>login.html</code> — 로그인</h3>
+      <div class="help-block">사용자 ID·비밀번호 입력 후 로그인하면 세션이 활성화되고 상태 화면으로 이동합니다.</div>
+
+      <h3 id="page-basic"><code>basicInfo.html</code> — BMS·축전지·운전·이벤트·제어</h3>
+      <div class="help-block">
+        왼쪽 메뉴로 전환합니다: <strong>BMS 데이터</strong>, <strong>축전지 상태</strong>, <strong>BMS 운전상태</strong>,
+        <strong>이벤트로그</strong>(주소 해시 <code>#eventlog</code>), <strong>BMS 제어</strong>(<code>#control</code>).
+      </div>
+
+      <h3 id="page-index"><code>index.html</code> — 네트워크 구성</h3>
+      <div class="help-block">IP·MAC·서브넷·게이트웨이, SNMP Access Control(Access IP·Community·권한), TRAP 목적지, WEB 활성 등을 설정합니다.</div>
+
+      <h3 id="page-snmp"><code>snmpTest.html</code> — SNMP TEST</h3>
+      <div class="help-block">
+        OID 입력 후 GET 요청. 하단 참고 표의 <strong>행을 클릭</strong>하면 OID가 입력됩니다.
+        <strong>아이에프텍 Rectifier 전체 표</strong>는 이 페이지에만 완전히 수록되어 있습니다.
+      </div>
+
+      <h3 id="page-help"><code>help.html</code></h3>
+      <div class="help-block">본 문서(사용 설명서)입니다.</div>
+
+      <h3 id="page-upload"><code>fileUpload.html</code> — 웹 자산 업로드</h3>
+      <div class="help-block">HTML·CSS·JS 등 SPIFFS 업로드용(여러 파일). 장비 펌에서 제공하는 업로드 API에 맞춰 동작합니다.</div>
+
+      <h3><code>serverIndex.html</code> 펌웨어(.bin) 업데이트</h3>
+      <div class="help-block"><strong>.bin 바이너리</strong> 전용 업로드 안내 페이지입니다. 일반 웹 파일은 <code>fileUpload.html</code> 계열 경로를 사용합니다.</div>
+
+      <!-- 3 OID -->
+      <h2 id="oid-sun">3. SNMP OID · 아이에프텍컴 Rectifier (SUN‑RECT 참고)</h2>
+      <div class="help-block">
+        Subtree 예: <code>1.3.6.1.4.1.22210.1.12082</code> —
+        입력/출력 전압·전류·배터리·모듈·셀·Rectifier 상태·알림용 OID 등 스칼라가 다수 정의되어 있습니다.<br />
+        전체 목록·클릭 복사는 <strong><a href="snmpTest.html">SNMP TEST 페이지</a></strong>의 첫 번째 참고표를 이용하세요.
+      </div>
+
+      <h2 id="oid-kepco">한국전력(IFTECH KEP)</h2>
+      <p class="note">베이스: <code>1.3.6.1.4.1.12236.2.12082</code></p>
+      <table class="doc">
+        <thead><tr><th>설명</th><th>OID</th></tr></thead>
+        <tbody>
+          <tr><td>R상 입력전압</td><td><code>.1.3.6.1.4.1.12236.2.12082.1.0</code></td></tr>
+          <tr><td>S상 입력전압</td><td><code>.1.3.6.1.4.1.12236.2.12082.2.0</code></td></tr>
+          <tr><td>T상 입력전압</td><td><code>.1.3.6.1.4.1.12236.2.12082.3.0</code></td></tr>
+          <tr><td>출력전압</td><td><code>.1.3.6.1.4.1.12236.2.12082.4.0</code></td></tr>
+          <tr><td>출력전류</td><td><code>.1.3.6.1.4.1.12236.2.12082.5.0</code></td></tr>
+          <tr><td>배터리전압</td><td><code>.1.3.6.1.4.1.12236.2.12082.6.0</code></td></tr>
+          <tr><td>충전전류</td><td><code>.1.3.6.1.4.1.12236.2.12082.7.0</code></td></tr>
+          <tr><td>충전모드 (문자열)</td><td><code>.1.3.6.1.4.1.12236.2.12082.8.0</code></td></tr>
+          <tr><td>출력주파수</td><td><code>.1.3.6.1.4.1.12236.2.12082.9.0</code></td></tr>
+          <tr><td>정전 이벤트</td><td><code>.1.3.6.1.4.1.12236.2.12082.200.0</code></td></tr>
+          <tr><td>정전 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.201.0</code></td></tr>
+          <tr><td>입력 정전</td><td><code>.1.3.6.1.4.1.12236.2.12082.202.0</code></td></tr>
+          <tr><td>입력 정전 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.203.0</code></td></tr>
+          <tr><td>모듈1 이벤트</td><td><code>.1.3.6.1.4.1.12236.2.12082.210.0</code></td></tr>
+          <tr><td>모듈1 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.211.0</code></td></tr>
+          <tr><td>모듈2 이벤트</td><td><code>.1.3.6.1.4.1.12236.2.12082.212.0</code></td></tr>
+          <tr><td>모듈2 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.213.0</code></td></tr>
+          <tr><td>모듈3 이벤트</td><td><code>.1.3.6.1.4.1.12236.2.12082.214.0</code></td></tr>
+          <tr><td>모듈3 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.215.0</code></td></tr>
+          <tr><td>모듈4 이벤트</td><td><code>.1.3.6.1.4.1.12236.2.12082.216.0</code></td></tr>
+          <tr><td>모듈4 복구</td><td><code>.1.3.6.1.4.1.12236.2.12082.217.0</code></td></tr>
+          <tr><td>KEP subtree 끝(워크용)</td><td><code>.1.3.6.1.4.1.12236.3</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="oid-road">한국도로공사 univPowerSupply</h2>
+      <p class="note">베이스: <code>1.3.6.1.3.9999</code></p>
+      <table class="doc">
+        <thead><tr><th>설명</th><th>OID</th></tr></thead>
+        <tbody>
+          <tr><td>식별 설명</td><td><code>.1.3.6.1.3.9999.1.1.0</code></td></tr>
+          <tr><td>식별 상세</td><td><code>.1.3.6.1.3.9999.1.2.0</code></td></tr>
+          <tr><td>배터리 잔존 시간</td><td><code>.1.3.6.1.3.9999.2.1.0</code></td></tr>
+          <tr><td>배터리 온도</td><td><code>.1.3.6.1.3.9999.2.2.0</code></td></tr>
+          <tr><td>배터리 전압</td><td><code>.1.3.6.1.3.9999.2.3.0</code></td></tr>
+          <tr><td>충전 전류</td><td><code>.1.3.6.1.3.9999.2.4.0</code></td></tr>
+          <tr><td>방전 전류</td><td><code>.1.3.6.1.3.9999.2.5.0</code></td></tr>
+          <tr><td>배터리 용량/셀</td><td><code>.1.3.6.1.3.9999.2.6.0</code></td></tr>
+          <tr><td>입력 주파수</td><td><code>.1.3.6.1.3.9999.3.1.0</code></td></tr>
+          <tr><td>입력 브라운</td><td><code>.1.3.6.1.3.9999.3.2.0</code></td></tr>
+          <tr><td>입력 블랙</td><td><code>.1.3.6.1.3.9999.3.3.0</code></td></tr>
+          <tr><td>입력 과도</td><td><code>.1.3.6.1.3.9999.3.4.0</code></td></tr>
+          <tr><td>입력 상수</td><td><code>.1.3.6.1.3.9999.3.5.0</code></td></tr>
+          <tr><td>입력 1상 위상</td><td><code>.1.3.6.1.3.9999.3.6.1.1.0</code></td></tr>
+          <tr><td>입력 1상 전압</td><td><code>.1.3.6.1.3.9999.3.6.1.2.0</code></td></tr>
+          <tr><td>입력 1상 전류</td><td><code>.1.3.6.1.3.9999.3.6.1.3.0</code></td></tr>
+          <tr><td>입력 1상 VA</td><td><code>.1.3.6.1.3.9999.3.6.1.4.0</code></td></tr>
+          <tr><td>입력 1상 W</td><td><code>.1.3.6.1.3.9999.3.6.1.5.0</code></td></tr>
+          <tr><td>출력 주파수</td><td><code>.1.3.6.1.3.9999.4.1.0</code></td></tr>
+          <tr><td>출력 인버터 온도</td><td><code>.1.3.6.1.3.9999.4.2.0</code></td></tr>
+          <tr><td>출력 컨트롤러 온도</td><td><code>.1.3.6.1.3.9999.4.3.0</code></td></tr>
+          <tr><td>출력 상수</td><td><code>.1.3.6.1.3.9999.4.4.0</code></td></tr>
+          <tr><td>출력 1상 위상</td><td><code>.1.3.6.1.3.9999.4.5.1.1.0</code></td></tr>
+          <tr><td>출력 1상 전압</td><td><code>.1.3.6.1.3.9999.4.5.1.2.0</code></td></tr>
+          <tr><td>출력 1상 전류</td><td><code>.1.3.6.1.3.9999.4.5.1.3.0</code></td></tr>
+          <tr><td>출력 1상 VA</td><td><code>.1.3.6.1.3.9999.4.5.1.4.0</code></td></tr>
+          <tr><td>출력 1상 W</td><td><code>.1.3.6.1.3.9999.4.5.1.5.0</code></td></tr>
+          <tr><td>바이패스 주파수</td><td><code>.1.3.6.1.3.9999.5.1.0</code></td></tr>
+          <tr><td>바이패스 상수</td><td><code>.1.3.6.1.3.9999.5.2.0</code></td></tr>
+          <tr><td>바이패스 1상 위상</td><td><code>.1.3.6.1.3.9999.5.3.1.1.0</code></td></tr>
+          <tr><td>바이패스 1상 전압</td><td><code>.1.3.6.1.3.9999.5.3.1.2.0</code></td></tr>
+          <tr><td>바이패스 1상 전류</td><td><code>.1.3.6.1.3.9999.5.3.1.3.0</code></td></tr>
+          <tr><td>상태 요약</td><td><code>.1.3.6.1.3.9999.6.1.0</code></td></tr>
+          <tr><td>알람 요약</td><td><code>.1.3.6.1.3.9999.7.1.0</code></td></tr>
+          <tr><td>테스트 배터리</td><td><code>.1.3.6.1.3.9999.8.1.0</code></td></tr>
+          <tr><td>테스트 배터리 상태</td><td><code>.1.3.6.1.3.9999.8.2.0</code></td></tr>
+          <tr><td>테스트 진단</td><td><code>.1.3.6.1.3.9999.8.3.0</code></td></tr>
+          <tr><td>테스트 진단 상태</td><td><code>.1.3.6.1.3.9999.8.4.0</code></td></tr>
+          <tr><td>테스트 표시 상태</td><td><code>.1.3.6.1.3.9999.8.6.0</code></td></tr>
+          <tr><td>스케줄 OFF</td><td><code>.1.3.6.1.3.9999.9.1.0</code></td></tr>
+          <tr><td>스케줄 ON</td><td><code>.1.3.6.1.3.9999.9.2.0</code></td></tr>
+          <tr><td>스케줄 셧다운</td><td><code>.1.3.6.1.3.9999.9.3.0</code></td></tr>
+          <tr><td>스케줄 Unix 시각</td><td><code>.1.3.6.1.3.9999.9.4.0</code></td></tr>
+          <tr><td>설정 출력 전압</td><td><code>.1.3.6.1.3.9999.10.1.0</code></td></tr>
+          <tr><td>설정 입력 전압</td><td><code>.1.3.6.1.3.9999.10.2.0</code></td></tr>
+          <tr><td>설정 출력 주파수</td><td><code>.1.3.6.1.3.9999.10.3.0</code></td></tr>
+          <tr><td>설정 입력 주파수</td><td><code>.1.3.6.1.3.9999.10.4.0</code></td></tr>
+          <tr><td>설정 배터리 최저</td><td><code>.1.3.6.1.3.9999.10.5.0</code></td></tr>
+          <tr><td>설정 알람음</td><td><code>.1.3.6.1.3.9999.10.6.0</code></td></tr>
+          <tr><td>설정 자동 리셋</td><td><code>.1.3.6.1.3.9999.10.7.0</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="external-tools">외부 MIB 도구(참고)</h2>
+      <div class="help-block">
+        ManageEngine MIB Browser 등에서 에이전트 IP와 커뮤니티를 설정한 뒤, 위 OID 문자열을 넣어 GET 할 수 있습니다.<br />
+        <a href="https://www.manageengine.com/products/mibbrowser-free-tool/">MIB Browser 다운로드 페이지</a>
+      </div>
+      <p class="note">상세 원문: 저장소 <code>doc/사용설명서/README.md</code> — 펌 업로드 시 본 페이지와 동일 내용 유지를 권장합니다.</p>
+    </main>
+  </div>
+  <script>
+    document.getElementById('logout').addEventListener('click', async function () {
+      try {
+        await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      } catch (e) {
+      }
+      window.location.href = 'login.html';
+    });
+  </script>
+</body>
+</html>

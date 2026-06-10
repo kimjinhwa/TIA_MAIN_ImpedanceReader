@@ -100,6 +100,8 @@ BatDeviceInterface batDevice;
 
 
 //void AD5940_ShutDown();
+void AD5940_init();
+void AD5940_ShutDown();
 
 float AD5940_calibration(float *real , float *image);
 float AD5940_readImpMagnitude(fImpCar_Type *pCarOut);
@@ -170,14 +172,14 @@ void pinsetup()
 
     pinMode(ADS1220_CS, OUTPUT);
     pinMode(A23S08_CS, OUTPUT);
-    pinMode(PORT3, OUTPUT); // NOT USE
+    pinMode(OPAMP_OFF_PORT, OUTPUT); // NOT USE
     pinMode(ADS1220_CS, OUTPUT);
     pinMode(ADS1220_DR, INPUT_PULLUP); /* DRDY: 변환 준비 시 보통 LOW */
     pinMode(PORT5, OUTPUT);  //NOT USE
     digitalWrite(ADS1220_CS, HIGH);
     digitalWrite(A23S08_CS, HIGH);  /* CS active-low: idle = HIGH */
     digitalWrite(ADS1220_CS, HIGH);
-    digitalWrite(PORT3, HIGH); //NOT USE
+    digitalWrite(OPAMP_OFF_PORT, HIGH); //NOT USE
     digitalWrite(PORT5, HIGH); //NOT USE
 
     pinMode(CS_5940, OUTPUT);
@@ -185,6 +187,10 @@ void pinsetup()
     pinMode(RST_5940, OUTPUT);
     digitalWrite(RST_5940, HIGH);
 
+}
+extern "C" void setVoltageReadMode(SetMode mode)
+{
+    digitalWrite(OPAMP_OFF_PORT, mode); //NOT USE
 }
 void AD5940_Main(void *parameters);
 
@@ -261,9 +267,14 @@ static bool startApOnly(void)
   }
 
   String apSsid = "POSCOIMP_";
+  String macSuffix = WiFi.macAddress();
+  macSuffix.replace(":", "");
+  apSsid += macSuffix.substring(0, macSuffix.length());
+  apSsid += "_";
   apSsid += systemDefaultValue.modbusId;
   const bool ok = WiFi.softAP(apSsid.c_str(), kApPassword);
   if (ok) {
+    WiFi.setSleep(false);
     ESP_LOGI(TAG, "WiFi AP started: SSID=%s  IP=%s",
              apSsid.c_str(), WiFi.softAPIP().toString().c_str());
   } else {
@@ -352,7 +363,7 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.impedanceGainPermille = IMP_GAIN_DEFAULT_PERMILLE;
     systemDefaultValue.impedanceOffsetCentiMohm = IMP_OFFSET_DEFAULT_CENTI_MOHM;
     systemDefaultValue.cellGain = 7506u;   /* reg3 */
-    systemDefaultValue.cellOffset = 356;   /* reg4 */
+    systemDefaultValue.cellOffset = 60;  /* reg4 */
     eepromNvsWriteBlock(&systemDefaultValue);
     EEPROM.commit();
   }
@@ -518,7 +529,7 @@ void initCellValue()
 #define CELL_MEAS_FILTER_DEPTH 2
 
 /** 미장착·저전압 셀: 임피던스 무효 (V). */
-#define CELL_VOLTAGE_IMP_VALID_MIN_V 0.6f
+#define CELL_VOLTAGE_IMP_VALID_MIN_V 1.0f
 
 /** 측정 순환 셀 수. 0 = EEPROM installed_cells(현장 15 등), 양수 = 검증용 고정. */
 #define MEASURE_ACTIVE_CELLS 0
@@ -602,6 +613,7 @@ static uint8_t mcpBatteryMuxPattern(unsigned cellIndex)
  */
 void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
 {
+  setVoltageReadMode(VOLTAGEMODE);
   const uint32_t t0 = millis();
 
   for (unsigned i = 0; i < nCells; i++)
@@ -760,7 +772,7 @@ static bool impSampleUsable(const fImpCar_Type *car)
   if (car == NULL)
     return false;
   const float mag = AD5940_ComplexMag((fImpCar_Type *)car);
-  return (car->Real > 0.0f) && (mag >= impedanceMinValidMohm());
+  return (mag >= impedanceMinValidMohm());
 }
 
 /** EEPROM baseImpendance[] 인코딩: mOhm × 100 (Modbus FC04 80~95). */
@@ -944,6 +956,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   const unsigned idx = (unsigned)(batNo - 1);
   const float prevZ = cellvalue[idx].impendance;
 
+  setVoltageReadMode(IMPEDANCEMODE);
   if (!cellVoltageAllowsImpedanceV(cellvalue[idx].voltage))
   {
     cellvalue[idx].impendance = 0.0f;
@@ -975,6 +988,13 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   {
     fImpCar_Type car;
     const float mag = AD5940_readImpMagnitude(&car);
+    // 초기 2/3 읽기는 무시한다.
+    if(i<readMax*2/3){
+      ESP_LOGI(TAG, "cell %d was skipped because of warmup", batNo);
+      delay(100);
+      continue;
+    }
+
 #if IMP_MONITOR_LOG_ALL
     if (s_espLogEnabled)
       ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
@@ -1232,8 +1252,6 @@ void setup()
   //for(int i=0;i<1;i){
   scanBatteriesAds1220(1);
 
-  void AD5940_init();
-  void AD5940_ShutDown();
   // void AD5940_DriveCE0Low_NoLoopback();
   // void AD5940_DriveCE0Low_WithLoopback();
   // void AD5940_OutputSineOnCE0(float freqHz, float offsetMv, float amplitudeMvpp, bool withLoopback);

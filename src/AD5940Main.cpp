@@ -25,11 +25,12 @@ Analog Devices Software License Agreement.
 #include "ad5940.h"
 #include <esp_task_wdt.h>
 #include "SimpleCLI.h"
+#include "mainGrobal.h"
 
 #define MAX_LOOP_COUNT 100
 #define APPBUFF_SIZE 512
-#define CAL_TOTAL_SAMPLES 20
-#define CAL_SKIP_SAMPLES 10 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
+#define CAL_TOTAL_SAMPLES 30
+#define CAL_SKIP_SAMPLES 15 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
 
 static Print *outputStream;
 uint32_t AppBuff[APPBUFF_SIZE];
@@ -199,8 +200,8 @@ static int32_t AD5940PlatformCfg(void)
 }
 
 extern AppBATCfg_Type AppBATCfg ; 
-#define ACVOLTPP_DEFAULT 300.0f
-#define DCVOLT_DEFAULT 600.0f
+#define ACVOLTPP_DEFAULT 200.0f
+#define DCVOLT_DEFAULT 300.0f
 #define ACVOLTPP_MEASURE 1.0f
 #define DCVOLT_MEASURE 200.0f
 
@@ -510,6 +511,7 @@ void changeAD5940ToMeasurement(bool bChange)
 {
   if(bChange)
   {
+  setVoltageReadMode(VOLTAGEMODE);
   AppBATCfg.SinFreq = 190000.0f;
   AppBATCfg.ACVoltPP = ACVOLTPP_MEASURE;
   AppBATCfg.DCVolt = DCVOLT_MEASURE;							/* DC 최소전압*/ 
@@ -521,6 +523,7 @@ void changeAD5940ToMeasurement(bool bChange)
   }
   else
   {
+    setVoltageReadMode(IMPEDANCEMODE);
     AppBATCtrl(BATCTRL_STOPNOW, 0);
     AD5940BATStructInit(); /* SinFreq=1kHz, AC/DC 기본값 + bParaChanged */
     AD5940Err err = AppBATInit(AppBuff, APPBUFF_SIZE);
@@ -538,6 +541,7 @@ float AD5940_calibration(float *real , float *image)
   uint16_t loopCount = CAL_TOTAL_SAMPLES;
   uint16_t sampleIndex = 0;
   uint16_t averagedCount = 0;
+  setVoltageReadMode(IMPEDANCEMODE);
 
   AD5940PlatformCfg();
   AD5940BATStructInit();             /* Configure your parameters in this function */

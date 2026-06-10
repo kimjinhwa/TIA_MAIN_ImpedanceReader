@@ -2,7 +2,7 @@
 #include <SPI.h>
 #include <esp_log.h>
 
-#define VOLTAGE_OFFSET 0.356
+#define VOLTAGE_OFFSET 0.060
 #define AMPERAGE_OFFSET 0.000f
 #define VOLTAGE_GAIN_RATIO 7.506f
 /** AIN2 핀 전압 = ADC 환산값 (멀티미터와 동일, ×2 하지 않음) */

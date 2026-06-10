@@ -16,7 +16,6 @@ static const char WEB_FILE_UPLOAD_BODY[] PROGMEM =
     "<label id='file-input' for='file'>   Choose file...</label>"
     "<input type='submit' class=btn value='Update(HTML,CSS,etc)'>"
     "<br><br><div id='prg'></div><br><div id='prgbar'><div id='bar'></div></div><br></form>"
-    "<p style='text-align:center'><a href='/login.html' style='color:#fff'>Login</a></p>"
     "<script>"
     "function sub(obj){"
     "var fileName=obj.value.split('\\\\');"
@@ -47,14 +46,6 @@ static const char WEB_FILE_UPLOAD_BODY[] PROGMEM =
     "};"
     "xhr.send(data);"
     "});"
-    "function getCookie(n){var e=n+'=',c=document.cookie.split(';');"
-    "for(var i=0;i<c.length;i++){var t=c[i];while(t.charAt(0)==' ')t=t.substring(1);"
-    "if(t.indexOf(e)==0)return t.substring(e.length);}return null;}"
-    "window.onload=function(){"
-    "var c=getCookie('login');"
-    "if(c&&new Date()<new Date(c))return;"
-    "window.location.href='/login.html';"
-    "};"
     "</script>";
 
 #endif
