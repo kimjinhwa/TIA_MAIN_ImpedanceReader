@@ -16,7 +16,6 @@
 //#include "HardwareSerialExtention.h"
 #include "HardwareSerial.h"
 #include <BluetoothSerial.h>
-#include "myBlueTooth.h"
 #include "NetworkTask.h"
 #include "ModbusClientRTU.h"
 #include "Logging.h"
@@ -86,10 +85,10 @@ volatile bool isAd5940Interrupt = false;
 
 _cell_value cellvalue[MAX_INSTALLED_CELLS];
 
+BluetoothSerial SerialBT;
 extern SimpleCLI simpleCli;
 uint16_t startBatnumber=1;
 
-BluetoothSerial SerialBT;
 static volatile bool s_espLogEnabled = true;
 static bool s_lastEspLogEnabledApplied = true;
 static float s_bootRcalVerifyReal = 0.0f;
@@ -156,6 +155,40 @@ void espLogSetEnabled(bool enabled)
   s_lastEspLogEnabledApplied = enabled;
 }
 
+static void applyBtCliStreams(bool useBluetooth)
+{
+  if (useBluetooth)
+  {
+    lsFile.setOutputStream(&SerialBT);
+    simpleCli.inputStream = &SerialBT;
+    simpleCli.outputStream = &SerialBT;
+  }
+  else
+  {
+    lsFile.setOutputStream(&Serial);
+    simpleCli.inputStream = &Serial;
+    simpleCli.outputStream = &Serial;
+  }
+}
+
+/** SerialBT.begin() 슬레이브 모드: SRV_OPEN=연결, CLOSE=해제 */
+static void btCallBack(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
+{
+  (void)param;
+  switch (event)
+  {
+  case ESP_SPP_SRV_OPEN_EVT:
+    applyBtCliStreams(true);
+    ESP_LOGI(TAG, "********** Bluetooth connected **********");
+    break;
+  case ESP_SPP_CLOSE_EVT:
+    applyBtCliStreams(false);
+    ESP_LOGI(TAG, "********** Bluetooth disconnected **********");
+    break;
+  default:
+    break;
+  }
+}
 void pinsetup()
 {
     pinMode(READ_BATVOL, INPUT);
@@ -195,39 +228,57 @@ extern "C" void setVoltageReadMode(SetMode mode)
 void AD5940_Main(void *parameters);
 
 #ifdef WIFI_AP_MODE
+static String s_cliInput;
+
+static void readCliInputSerial(void)
+{
+  Stream *src = nullptr;
+
+  if (SerialBT.connected() && SerialBT.available())
+    src = &SerialBT;
+  else if (Serial.available())
+    src = &Serial;
+  else
+    return;
+
+  char ch = 0;
+  if (src->readBytes(&ch, 1) != 1)
+    return;
+
+  if (ch == 8 || ch == 127)
+  {
+    if (s_cliInput.length() > 0)
+      s_cliInput.remove(s_cliInput.length() - 1);
+    return;
+  }
+
+  if (ch == '\n' || ch == '\r')
+  {
+    if (s_cliInput.length() > 0)
+      simpleCli.parse(s_cliInput);
+    s_cliInput = "";
+
+    if (simpleCli.outputStream)
+      simpleCli.outputStream->print("\n# ");
+    else
+      Serial.print("\n# ");
+    return;
+  }
+
+  s_cliInput += ch;
+}
+
 static void serviceTask(void *parameters)
 {
   (void)parameters;
-  myBlueTooth blueTooth;
-  simpleCli.inputStream = &Serial;
-  uint32_t previousBtSwitchMs = 0;
-  const uint32_t btSwitchIntervalMs = 5000;
+  applyBtCliStreams(false);
 
   for (;;)
   {
 #ifdef WIFI_AP_MODE
     restApiHandle();
 #endif
-    blueTooth.readInputSerialBT();
-
-    const uint32_t nowMs = millis();
-    if ((nowMs - previousBtSwitchMs) > btSwitchIntervalMs)
-    {
-      previousBtSwitchMs = nowMs;
-      if (SerialBT.connected())
-      {
-        lsFile.setOutputStream(&SerialBT);
-        simpleCli.inputStream = &SerialBT;
-        simpleCli.outputStream = &SerialBT;
-      }
-      else
-      {
-        lsFile.setOutputStream(&Serial);
-        simpleCli.outputStream = &Serial;
-        simpleCli.inputStream = &Serial;
-      }
-    }
-
+    readCliInputSerial();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
@@ -1253,6 +1304,9 @@ void setup()
   bleName += WifiAddress;
   bleName += "_";
   bleName += systemDefaultValue.modbusId;
+  /* framework 3.20006: register_callback(esp_spp_cb_t*) — 함수 포인터 주소 전달 */
+  static esp_spp_cb_t s_btSppHook = btCallBack;
+  SerialBT.register_callback(&s_btSppHook);
   SerialBT.begin(bleName.c_str());
   Serial.printf("\nBluetooth Name : %s\n",bleName.c_str());
   wifiApmodeConfig();
@@ -1264,8 +1318,6 @@ void setup()
     ESP_LOGI(TAG, "ServiceTask started (BT+WEB, core0, prio1)");
   }
 #endif
-
-  lsFile.writeLogString(strResetReason);
 
   SPI.setFrequency(spiClk);
   SPI.begin(SCK, MISO, MOSI, CS_5940);

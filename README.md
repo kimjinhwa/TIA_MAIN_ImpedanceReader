@@ -1,4 +1,7 @@
 # TIA Resistance Measurement System.
+* 동작전원  : 7~18VDC
+* 소비전력  : 135mA ( 메타기 측정 결과.)
+
 ## Board 4.0 Debugging
 * C16 0.1uF -> 1uF , Because of USB Programming Timming. 
 * R8을 제거한후 TP2와 TP3를 연결한다.-> 여기에 10K저항을 하나 넣자. 

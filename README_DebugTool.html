@@ -278,8 +278,6 @@ modpol에서 읽는 지를 확인한다.
   cmd_config = addSingleArgCmd(&quot;temp/erature&quot;, temperature_configCallback);
   cmd_config = addSingleArgCmd(&quot;mod/uledid&quot;, moduleid_configCallback);
 
-  cmd_config = addCommand(&quot;writecellLog&quot;,writeCellLog_configCallback);
-  cmd_config = addCommand(&quot;readcellLog&quot;,readCellLog_configCallback);
   cmd_config = addCommand(&quot;wrm&quot;,measuredvalue_configCallback);
   cmd_config.addPositionalArgument(&quot;num&quot;);
   cmd_config.addPositionalArgument(&quot;imp&quot;);

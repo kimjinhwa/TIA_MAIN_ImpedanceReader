@@ -259,15 +259,7 @@ void printCompensationValue(){
   simpleCli.outputStream->printf("\r\n-------------------------\r\n");
 }
 
-void writeCellLog_configCallback(cmd *cmdPtr){
-  simpleCli.outputStream->printf("\nwrite Cell Log");
-  lsFile.writeCellDataLog();
-}
-void readCellLog_configCallback(cmd *cmdPtr){
 
-  simpleCli.outputStream->printf("\nRead Cell Log");
-  lsFile.readCellDataLog(0);
-}
 void measuredvalue_configCallback(cmd *cmdPtr){
   Command cmd(cmdPtr);
   Argument arg;
@@ -782,8 +774,6 @@ SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize, Print *outputStre
   cmd_config.addPositionalArgument("beforeId");
   cmd_config.addPositionalArgument("changeId");
 
-  cmd_config = addCommand("writecellLog",writeCellLog_configCallback);
-  cmd_config = addCommand("readcellLog",readCellLog_configCallback);
   cmd_config = addCommand("wrm",measuredvalue_configCallback);
   cmd_config.addPositionalArgument("num");
   cmd_config.addPositionalArgument("imp");

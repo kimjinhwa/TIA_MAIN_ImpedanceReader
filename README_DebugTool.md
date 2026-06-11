@@ -96,8 +96,6 @@ SimpleCLI::SimpleCLI(int commandQueueSize, int errorQueueSize,Print *outputStrea
   cmd_config = addSingleArgCmd("temp/erature", temperature_configCallback);
   cmd_config = addSingleArgCmd("mod/uledid", moduleid_configCallback);
 
-  cmd_config = addCommand("writecellLog",writeCellLog_configCallback);
-  cmd_config = addCommand("readcellLog",readCellLog_configCallback);
   cmd_config = addCommand("wrm",measuredvalue_configCallback);
   cmd_config.addPositionalArgument("num");
   cmd_config.addPositionalArgument("imp");
