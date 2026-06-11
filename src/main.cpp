@@ -86,6 +86,8 @@ volatile bool isAd5940Interrupt = false;
 _cell_value cellvalue[MAX_INSTALLED_CELLS];
 
 BluetoothSerial SerialBT;
+/** 사용자 로그/CLI 출력 — applyBtCliStreams()에서 Serial ↔ SerialBT 전환 */
+Print *outputStream = &Serial;
 extern SimpleCLI simpleCli;
 uint16_t startBatnumber=1;
 
@@ -157,18 +159,10 @@ void espLogSetEnabled(bool enabled)
 
 static void applyBtCliStreams(bool useBluetooth)
 {
-  if (useBluetooth)
-  {
-    lsFile.setOutputStream(&SerialBT);
-    simpleCli.inputStream = &SerialBT;
-    simpleCli.outputStream = &SerialBT;
-  }
-  else
-  {
-    lsFile.setOutputStream(&Serial);
-    simpleCli.inputStream = &Serial;
-    simpleCli.outputStream = &Serial;
-  }
+  outputStream = useBluetooth ? static_cast<Print *>(&SerialBT) : static_cast<Print *>(&Serial);
+  lsFile.setOutputStream(outputStream);
+  simpleCli.inputStream = useBluetooth ? static_cast<Stream *>(&SerialBT) : static_cast<Stream *>(&Serial);
+  simpleCli.outputStream = outputStream;
 }
 
 /** SerialBT.begin() 슬레이브 모드: SRV_OPEN=연결, CLOSE=해제 */
@@ -258,10 +252,8 @@ static void readCliInputSerial(void)
       simpleCli.parse(s_cliInput);
     s_cliInput = "";
 
-    if (simpleCli.outputStream)
-      simpleCli.outputStream->print("\n# ");
-    else
-      Serial.print("\n# ");
+    if (outputStream)
+      outputStream->print("\n# ");
     return;
   }
 
@@ -679,7 +671,7 @@ void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
     /* 임피던스는 AD5940 실측만 링에 넣음 — initCellValue 더미값이 섞이면 1회차 Z가 깨짐 */
   }
   ESP_LOGI(TAG, "ADS1220 cell scan: %u cells, %lums", (unsigned)nCells, (unsigned long)(millis() - t0));
-  SerialBT.printf("ADS1220 cell scan: %u cells, %lums\n", (unsigned)nCells, (unsigned long)(millis() - t0));
+  outputStream->printf("ADS1220 cell scan: %u cells, %lums\n", (unsigned)nCells, (unsigned long)(millis() - t0));
 }
 // 인터럽트 서비스 루틴 (ISR)
 // void IRAM_ATTR handleInterrupt() {
@@ -709,9 +701,7 @@ static float readCellVoltageOnce(void)
 
 static uint32_t impedanceMeasurePeriodMs(void)
 {
-  dataSyncLockSystemConfig();
   uint32_t sec = (uint32_t)systemDefaultValue.ImpedanceMeasurePeriod;
-  dataSyncUnlockSystemConfig();
   if (sec == 0)
     sec = IMP_MEASURE_PERIOD_DEFAULT_SEC;
   return sec * 1000UL;
@@ -719,9 +709,7 @@ static uint32_t impedanceMeasurePeriodMs(void)
 
 static uint16_t impedanceReadMax(void)
 {
-  dataSyncLockSystemConfig();
   uint16_t n = systemDefaultValue.ACVoltPP;
-  dataSyncUnlockSystemConfig();
   if (n == 0 || n > IMP_READ_MAX_MAX)
     n = (uint16_t)IMP_READ_MAX_DEFAULT;
   return n;
@@ -729,9 +717,7 @@ static uint16_t impedanceReadMax(void)
 
 static uint8_t impedanceStableWindow(uint16_t readMax)
 {
-  dataSyncLockSystemConfig();
   uint16_t n = systemDefaultValue.DCVolt;
-  dataSyncUnlockSystemConfig();
   if (n == 0 || n > IMP_STABLE_WINDOW_MAX)
     n = (uint16_t)IMP_STABLE_WINDOW_DEFAULT;
   if (n > readMax)
@@ -743,9 +729,7 @@ static uint8_t impedanceStableWindow(uint16_t readMax)
 
 static float impedanceStableToleranceRatio(void)
 {
-  dataSyncLockSystemConfig();
   uint8_t pct = systemDefaultValue.VoltageFactor;
-  dataSyncUnlockSystemConfig();
   if (pct == 0 || pct > 20)
     pct = (uint8_t)IMP_STABLE_REL_TOL_DEFAULT_PERCENT;
   return (float)pct / 100.0f;
@@ -753,9 +737,7 @@ static float impedanceStableToleranceRatio(void)
 
 static uint8_t impedancePostStableSamples(void)
 {
-  dataSyncLockSystemConfig();
   uint8_t n = systemDefaultValue.TemperatureFactor;
-  dataSyncUnlockSystemConfig();
   if (n == 0 || n > IMP_POST_STABLE_SAMPLES_MAX)
     n = (uint8_t)IMP_POST_STABLE_SAMPLES_DEFAULT;
   return n;
@@ -763,9 +745,7 @@ static uint8_t impedancePostStableSamples(void)
 
 static float impedanceMinValidMohm(void)
 {
-  dataSyncLockSystemConfig();
   uint16_t deci = systemDefaultValue.RcalLoopCount;
-  dataSyncUnlockSystemConfig();
   if (deci == 0 || deci > 10000)
     deci = (uint16_t)IMP_MAG_MIN_VALID_MOHM_DEFAULT_DECI;
   return (float)deci / 10.0f;
@@ -773,17 +753,12 @@ static float impedanceMinValidMohm(void)
 
 static bool impedanceAutoUpdateEnabled(void)
 {
-  dataSyncLockSystemConfig();
-  const uint8_t enabled = systemDefaultValue.impedanceAutoUpdateEnabled;
-  dataSyncUnlockSystemConfig();
-  return enabled != 0;
+  return systemDefaultValue.impedanceAutoUpdateEnabled != 0;
 }
 
 static float impedanceGlobalGain(void)
 {
-  dataSyncLockSystemConfig();
   uint16_t gainPermille = systemDefaultValue.impedanceGainPermille;
-  dataSyncUnlockSystemConfig();
   if (gainPermille < IMP_GAIN_MIN_PERMILLE || gainPermille > IMP_GAIN_MAX_PERMILLE)
     gainPermille = IMP_GAIN_DEFAULT_PERMILLE;
   return (float)gainPermille / 1000.0f;
@@ -791,20 +766,14 @@ static float impedanceGlobalGain(void)
 
 static float impedanceGlobalOffsetMohm(void)
 {
-  dataSyncLockSystemConfig();
-  const int16_t offsetCenti = systemDefaultValue.impedanceOffsetCentiMohm;
-  dataSyncUnlockSystemConfig();
-  return (float)offsetCenti / 100.0f;
+  return (float)systemDefaultValue.impedanceOffsetCentiMohm / 100.0f;
 }
 
 static float impedanceCellCompensationMohm(unsigned idx)
 {
   if (idx >= MAX_INSTALLED_CELLS)
     return 0.0f;
-  dataSyncLockSystemConfig();
-  const int16_t compCenti = systemDefaultValue.impendanceCompensation[idx];
-  dataSyncUnlockSystemConfig();
-  return (float)compCenti / 100.0f;
+  return (float)systemDefaultValue.impendanceCompensation[idx] / 100.0f;
 }
 
 static float applyImpedanceGlobalCalibration(float rawMohm)
@@ -851,9 +820,7 @@ static void applyCellImpedanceFromEeprom(unsigned batNo)
   if (batNo < 1 || batNo > (int)nActive)
     return;
   const unsigned idx = (unsigned)(batNo - 1);
-  dataSyncLockSystemConfig();
   const int16_t baseCenti = systemDefaultValue.baseImpendance[idx];
-  dataSyncUnlockSystemConfig();
   const float z = impEepromCentiToMohm(baseCenti);
   if (z <= 0.0f)
     return;
@@ -888,14 +855,13 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   {
     if (s_espLogEnabled){
       ESP_LOGI(TAG, "cell %u Z EEPROM keep disabled (auto update OFF)", (unsigned)batNo);
-      SerialBT.printf("cell %u Z EEPROM keep disabled (auto update OFF)\n", (unsigned)batNo);
+      outputStream->printf("cell %u Z EEPROM keep disabled (auto update OFF)\n", (unsigned)batNo);
     }
     return false;
   }
 
   const unsigned idx = (unsigned)(batNo - 1);
   const int16_t newC = impMohmToEepromCenti(z_mOhm);
-  dataSyncLockSystemConfig();
   const int16_t oldC = systemDefaultValue.baseImpendance[idx];
   uint8_t minPctCfg = systemDefaultValue.ImpedanceFactor;
   if (minPctCfg == 0 || minPctCfg > 100)
@@ -903,10 +869,7 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   const float minRatio = (float)minPctCfg / 100.0f;
 
   if (newC <= 0)
-  {
-    dataSyncUnlockSystemConfig();
     return false;
-  }
 
   if (oldC > 0 && !impEepromChangeEnough(oldC, newC, minRatio))
   {
@@ -917,13 +880,13 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
       ESP_LOGI(TAG,
                "cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)",
                (unsigned)batNo, oldM, z_mOhm, pct, minPct);
-      SerialBT.printf("cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)\n",
+      outputStream->printf("cell %u Z EEPROM keep %.2f mOhm (new %.2f, %+.1f%% < ±%.0f%%)\n",
                (unsigned)batNo, oldM, z_mOhm, pct, minPct);
     }
-    dataSyncUnlockSystemConfig();
     return false;
   }
 
+  dataSyncLockSystemConfig();
   systemDefaultValue.baseImpendance[idx] = newC;
   (void)readnWriteEEProm(true);
   dataSyncUnlockSystemConfig();
@@ -931,7 +894,7 @@ static bool tryPersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)",
              (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
-    SerialBT.printf("cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)\n",
+    outputStream->printf("cell %u Z EEPROM saved %.2f mOhm (was %.2f mOhm)\n",
              (unsigned)batNo, z_mOhm, oldC > 0 ? impEepromCentiToMohm(oldC) : 0.0f);
     }
   return true;
@@ -1001,7 +964,7 @@ static float readCellVoltageForBat(int batNo)
 
   if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
-    SerialBT.printf("cell %u V=%.4f (3s)\n", (unsigned)batNo, vFiltered);
+    outputStream->printf("cell %u V=%.4f (3s)\n", (unsigned)batNo, vFiltered);
     }
   return vFiltered;
 }
@@ -1026,7 +989,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     if (s_espLogEnabled){
       ESP_LOGI(TAG, "cell %u Z skipped — no battery (V=%.4f < %.2f V)",
                (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
-      SerialBT.printf("cell %u Z skipped — no battery (V=%.4f < %.2f V)\n",
+      outputStream->printf("cell %u Z skipped — no battery (V=%.4f < %.2f V)\n",
                (unsigned)batNo, cellvalue[idx].voltage, CELL_VOLTAGE_IMP_VALID_MIN_V);
     }
     return false;
@@ -1047,7 +1010,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
   if (s_espLogEnabled){
     ESP_LOGI(TAG, "cell %u Z monitor start (max %u reads, window %u)",
              (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
-    SerialBT.printf("cell %u Z monitor start (max %u reads, window %u)\n",
+    outputStream->printf("cell %u Z monitor start (max %u reads, window %u)\n",
              (unsigned)batNo, (unsigned)readMax, (unsigned)stableWindow);
     }
 #endif
@@ -1057,9 +1020,9 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     fImpCar_Type car;
     const float mag = AD5940_readImpMagnitude(&car);
     // 초기 2/3 읽기는 무시한다.
-    if(i<readMax*2/3){
+    if(i<readMax*1/3){
       ESP_LOGI(TAG, "cell %d was skipped because of warmup", batNo);
-      SerialBT.printf("cell %d was skipped because of warmup\n", batNo);
+      outputStream->printf("cell %d was skipped because of warmup\n", batNo);
       delay(100);
       continue;
     }
@@ -1068,7 +1031,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
     if (s_espLogEnabled){
       ESP_LOGI(TAG, "  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
                (unsigned)batNo, i + 1, mag, car.Real, car.Image);
-      SerialBT.printf("  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)",
+      outputStream->printf("  cell %u Z #%03d: %.3f mOhm (real=%.1f image=%.1f)\n",
                (unsigned)batNo, i + 1, mag, car.Real, car.Image);
       }
 #endif
@@ -1098,7 +1061,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
         if (s_espLogEnabled)
         {
           ESP_LOGI(TAG, "  cell %u Z post #%d: %.3f mOhm", (unsigned)batNo, postCount + 1, postMag);
-          SerialBT.printf("  cell %u Z post #%d: %.3f mOhm\n", (unsigned)batNo, postCount + 1, postMag);
+          outputStream->printf("  cell %u Z post #%d: %.3f mOhm\n", (unsigned)batNo, postCount + 1, postMag);
         }
 #endif
         if (!impSampleUsable(&postCar))
@@ -1130,7 +1093,7 @@ static bool readCellImpedanceWithWarmup(int batNo, float *outZ)
                    "cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)",
                    (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
                    postCount, i + 1 + postCount);
-          SerialBT.printf("cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)\n",
+          outputStream->printf("cell %u Z=%.3f mOhm valid (3%% stable@%d +%d avg, reads=%d)\n",
                    (unsigned)batNo, cellvalue[idx].impendance, winStart + stableWindow,
                    postCount, i + 1 + postCount);
         }
@@ -1167,7 +1130,7 @@ static void forcePersistCellImpedanceToEeprom(unsigned batNo, float z_mOhm)
   cellvalue[idx].baseImpendance = newC;
   if (s_espLogEnabled)
     ESP_LOGI(TAG, "cell %u Z baseline EEPROM %.2f mOhm", (unsigned)batNo, zBeforeCellComp);
-  SerialBT.printf("cell %u Z baseline EEPROM %.2f mOhm\n", (unsigned)batNo, zBeforeCellComp);
+  outputStream->printf("cell %u Z baseline EEPROM %.2f mOhm\n", (unsigned)batNo, zBeforeCellComp);
 }
 
 static bool s_baselineScanRunCell = false;
@@ -1186,7 +1149,7 @@ void modbusOnFc06Reg50Write(uint16_t value)
     s_baselineScanRunCell = true;
     if (s_espLogEnabled){
       ESP_LOGI(TAG, "Modbus baseline Z scan start");
-      SerialBT.printf("Modbus baseline Z scan start\n");
+      outputStream->printf("Modbus baseline Z scan start\n");
     }
   }
 }
@@ -1218,7 +1181,7 @@ void modbusBaselineScanPoll(void)
     modbusReg50BaseImpProgress = 0;
     if (s_espLogEnabled){
       ESP_LOGI(TAG, "Modbus baseline Z scan complete (%u cells)", (unsigned)n);
-      SerialBT.printf("Modbus baseline Z scan complete (%u cells)\n", (unsigned)n);
+      outputStream->printf("Modbus baseline Z scan complete (%u cells)\n", (unsigned)n);
     }
     return;
   }
@@ -1249,11 +1212,11 @@ bool runRcalCalibrationAndOptionallySave(bool saveToEeprom, float *outReal, floa
     if (!saved)
     {
       ESP_LOGE(TAG, "RCAL calibration save failed");
-      SerialBT.printf("RCAL calibration save failed\n");
+      outputStream->printf("RCAL calibration save failed\n");
       return false;
     }
     ESP_LOGI(TAG, "RCAL calibration saved: real=%.2f image=%.2f", real, image);
-    SerialBT.printf("RCAL calibration saved: real=%.2f image=%.2f\n", real, image);
+    outputStream->printf("RCAL calibration saved: real=%.2f image=%.2f\n", real, image);
   }
   return true;
 }
@@ -1287,6 +1250,7 @@ void setup()
            ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
   // AD5940 인터럽트는 AD5940_MCUResourceInit()에서 Ext_Int0_Handler로 등록됨
   Serial.begin(115200);
+  applyBtCliStreams(false);
 
   const esp_reset_reason_t rr = esp_reset_reason();
   String strResetReason = "ResetReason=";
@@ -1363,7 +1327,6 @@ void setup()
 
   Mcp23s08_setOutput(mcpBatteryMuxPattern(1));
 
-  simpleCli.outputStream = &Serial;
   vTaskDelay(1000);
   ESP_LOGI(TAG, "System Started at %s mode", systemDefaultValue.runMode == 0 ? "Manual" : "Auto");
   ESP_LOGI(TAG, "\nEEPROM installed Bat number %d", systemDefaultValue.installed_cells);
@@ -1493,7 +1456,7 @@ void loop(void)
     {
       s_impedanceSessionActive = false;
       ESP_LOGI(TAG, "impedance round complete (%u cells)", (unsigned)measureActiveCellCount());
-      SerialBT.printf("impedance round complete (%u cells)\n", (unsigned)measureActiveCellCount());
+      outputStream->printf("impedance round complete (%u cells)\n", (unsigned)measureActiveCellCount());
     }
   }
   else
@@ -1505,7 +1468,7 @@ void loop(void)
       s_impedanceSessionActive = true;
       s_impedanceSessionCell = 1;
       ESP_LOGI(TAG, "impedance session start (period %lu s)", (unsigned long)(impPeriodMs / 1000UL));
-      SerialBT.printf("impedance session start (period %lu s)\n", (unsigned long)(impPeriodMs / 1000UL));
+      outputStream->printf("impedance session start (period %lu s)\n", (unsigned long)(impPeriodMs / 1000UL));
     }
 
     if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
@@ -1536,7 +1499,7 @@ void loop(void)
       ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
                ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
                ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
-      SerialBT.printf("NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)\n",
+      outputStream->printf("NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)\n",
                ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
                ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
     }

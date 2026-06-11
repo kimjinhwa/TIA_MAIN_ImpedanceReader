@@ -1,4 +1,6 @@
-#define VERSION "1.0.20" // 전류읽기모니터와 모드버스를 맟춘다.
+#define VERSION "1.0.21" // outputStream 사용하여 블루투스 출력을 일관성 있게 했다. 
+//#define VERSION "1.0.21" // myBlueTooth 삭제 
+//#define VERSION "1.0.20" // 전류읽기모니터와 모드버스를 맟춘다.
 //#define VERSION "1.0.20" // 전류읽기의 버그 수정 및 SerialBT출력 추가( 이때 가끔 죽는 문제가 있댜.) 
 //#define VERSION "1.0.20" // Test mode의 모든 기능을 완료함. 
 //#define VERSION "1.0.19" //  WiFi 및 내부저항, fileupload등을 수정한다. 
