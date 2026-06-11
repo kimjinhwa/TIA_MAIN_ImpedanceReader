@@ -51,7 +51,19 @@ void Mcp23s08_initOutputsAll(void)
 {
   Mcp23s08_writeReg(kRegIODIR, 0x00u);
 }
-
+static uint8_t s_ledToggle= 0x00u;
+void Mcp23s08_LEDControl(bool on)
+{
+  if (on)
+    Mcp23s08_writeReg(kRegOLAT, 0x00u);
+  else
+    Mcp23s08_writeReg(kRegOLAT, 0x01u);
+}
+void Mcp23s08_LEDToggle(void)
+{
+  s_ledToggle ^= 0x01u;
+  Mcp23s08_writeReg(kRegOLAT, s_ledToggle);
+}
 void Mcp23s08_setOutput(uint8_t pattern)
 {
   Mcp23s08_writeReg(kRegOLAT, pattern);

@@ -187,12 +187,12 @@
               <td class="bms-range">0 또는 1<br/>기본값: 0(OFF)</td>
             </tr>
             <tr>
-              <td class="bms-name">내부저항 읽기 주기(초)</td>
+              <td class="bms-name">내부저항 읽기 주기(분)</td>
               <td class="bms-desc">전체 내부저항 측정 라운드를 시작하는 주기입니다. 값이 작을수록 더 자주 측정합니다.</td>
               <td class="bms-value">
-                <input id="impPeriodSecInput" type="number" min="1" max="65535" step="1" value="3600" />
+                <input id="impPeriodMinInput" type="number" min="1" max="65535" step="1" value="60" />
               </td>
-              <td class="bms-range">1 ~ 65535 초<br/>기본값: 3600초</td>
+              <td class="bms-range">1 ~ 65535 분<br/>기본값: 60분(1시간)</td>
             </tr>
             <tr>
               <td class="bms-name">최대 읽기 횟수</td>

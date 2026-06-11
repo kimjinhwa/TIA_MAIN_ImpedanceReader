@@ -61,7 +61,7 @@ async function loadBmsConfig() {
         const ampereGain = Number(cfg.ampereGain);
         const percent = Number(cfg.impedanceEepromChangePercent);
         const autoUpdate = Number(cfg.impedanceAutoUpdateEnabled);
-        const period = Number(cfg.impedanceMeasurePeriodSec);
+        const period = Number(cfg.impedanceMeasurePeriodMin ?? cfg.impedanceMeasurePeriodSec);
         const readMax = Number(cfg.impedanceReadMax);
         const stableWindow = Number(cfg.impedanceStableWindow);
         const stableTol = Number(cfg.impedanceStableTolPercent);
@@ -83,7 +83,7 @@ async function loadBmsConfig() {
         const ampereGainInput = document.getElementById("ampereGainInput");
         const percentInput = document.getElementById("impChangePercentInput");
         const autoUpdateInput = document.getElementById("impAutoUpdateInput");
-        const periodInput = document.getElementById("impPeriodSecInput");
+        const periodInput = document.getElementById("impPeriodMinInput");
         const readMaxInput = document.getElementById("impReadMaxInput");
         const stableWindowInput = document.getElementById("impStableWindowInput");
         const stableTolInput = document.getElementById("impStableTolPercentInput");
@@ -134,7 +134,7 @@ async function saveBmsConfig() {
     const ampereGainRaw = Number(document.getElementById("ampereGainInput")?.value || "0");
     const percentRaw = Number(document.getElementById("impChangePercentInput")?.value || "0");
     const autoUpdateRaw = Number(document.getElementById("impAutoUpdateInput")?.value || "0");
-    const periodRaw = Number(document.getElementById("impPeriodSecInput")?.value || "0");
+    const periodRaw = Number(document.getElementById("impPeriodMinInput")?.value || "0");
     const readMaxRaw = Number(document.getElementById("impReadMaxInput")?.value || "0");
     const stableWindowRaw = Number(document.getElementById("impStableWindowInput")?.value || "0");
     const stableTolRaw = Number(document.getElementById("impStableTolPercentInput")?.value || "0");
@@ -158,7 +158,7 @@ async function saveBmsConfig() {
     const impGain = Number.isFinite(impGainRaw) ? Math.round(impGainRaw * 1000) / 1000 : NaN;
     const impOffsetMohm = Number.isFinite(impOffsetRaw) ? Math.round(impOffsetRaw * 100) / 100 : NaN;
     if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || autoUpdate === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000 || !Number.isFinite(impGain) || impGain < 0.1 || impGain > 4.0 || !Number.isFinite(impOffsetMohm) || impOffsetMohm < -327.68 || impOffsetMohm > 327.67) {
-        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 자동업데이트(0|1), 주기(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000), 임피던스게인(0.1~4.0), 임피던스오프셋(-327.68~327.67mΩ)");
+        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 자동업데이트(0|1), 주기분(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000), 임피던스게인(0.1~4.0), 임피던스오프셋(-327.68~327.67mΩ)");
         return;
     }
 
@@ -177,7 +177,7 @@ async function saveBmsConfig() {
                     ampereGain: ampereGain,
                     impedanceEepromChangePercent: percent,
                     impedanceAutoUpdateEnabled: autoUpdate,
-                    impedanceMeasurePeriodSec: period,
+                    impedanceMeasurePeriodMin: period,
                     impedanceReadMax: readMax,
                     impedanceStableWindow: stableWindow,
                     impedanceStableTolPercent: stableTol,

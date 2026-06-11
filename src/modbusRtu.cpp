@@ -26,7 +26,7 @@ uint16_t modbusReg50BaseImpProgress = 0;
 #define MODBUS_REG_IMP_READ_MAX 15u               // FC03/FC06: 내부저항 최대 읽기 횟수 레지스터
 #define MODBUS_REG_IMP_STABLE_WINDOW 16u          // FC03/FC06: 내부저항 안정 판단 윈도우 레지스터
 #define MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT 17u  // FC03/FC06: EEPROM 갱신 임계치(%) 레지스터
-#define MODBUS_REG_IMP_PERIOD_SEC 18u             // FC03/FC06: 내부저항 측정 주기(초) 레지스터
+#define MODBUS_REG_IMP_PERIOD_MIN 18u             // FC03/FC06: 내부저항 측정 주기(분) 레지스터
 #define MODBUS_REG_RCAL_BOOT_REAL_HI 19u          // FC03: 부팅 RCAL Real (int32 milli, HI word)
 #define MODBUS_REG_RCAL_BOOT_REAL_LO 20u
 #define MODBUS_REG_RCAL_BOOT_IMAGE_HI 21u         // FC03: 부팅 RCAL Image
@@ -355,7 +355,7 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
   reg[MODBUS_REG_IMP_READ_MAX] = modbusSanitizeImpReadMax(systemDefaultValue.ACVoltPP);
   reg[MODBUS_REG_IMP_STABLE_WINDOW] = modbusSanitizeImpStableWindow(systemDefaultValue.DCVolt, reg[MODBUS_REG_IMP_READ_MAX]);
   reg[MODBUS_REG_IMP_EEPROM_CHANGE_PERCENT] = (uint16_t)constrain((int)systemDefaultValue.ImpedanceFactor, 1, 100);
-  reg[MODBUS_REG_IMP_PERIOD_SEC] = systemDefaultValue.ImpedanceMeasurePeriod == 0 ? 3600u : systemDefaultValue.ImpedanceMeasurePeriod;
+  reg[MODBUS_REG_IMP_PERIOD_MIN] = systemDefaultValue.ImpedanceMeasurePeriod == 0 ? 60u : systemDefaultValue.ImpedanceMeasurePeriod;
   modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_REAL_HI, bootRcalVerifyRealGet());
   modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_IMAGE_HI, bootRcalVerifyImageGet());
   modbusPackFloatMilli(reg, MODBUS_REG_RCAL_BOOT_MAG_HI, bootRcalVerifyMagnitudeGet());
@@ -535,7 +535,7 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
       return false;
     systemDefaultValue.ImpedanceFactor = (uint8_t)value;
     return true;
-  case MODBUS_REG_IMP_PERIOD_SEC:
+  case MODBUS_REG_IMP_PERIOD_MIN:
     if (value < 1 || value > 65535)
       return false;
     systemDefaultValue.ImpedanceMeasurePeriod = value;
@@ -750,7 +750,7 @@ ModbusMessage FC06(ModbusMessage request)
   ESP_LOGD("MODBUS", "FC06 addr=%u val=%u", writeAddress, value);
 
   const bool isCoreHoldingRange =
-      (writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+      (writeAddress <= MODBUS_REG_IMP_PERIOD_MIN) ||
       (writeAddress >= MODBUS_REG_RCAL_BOOT_REAL_HI && writeAddress <= MODBUS_REG_RCAL_EEPROM_MAG_LO) ||
       (writeAddress == MODBUS_REG_BASE_IMP_PROGRESS) ||
       (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET);
@@ -772,7 +772,7 @@ ModbusMessage FC06(ModbusMessage request)
     }
     if (writeAddress == 0 || writeAddress == 1 ||
         (writeAddress >= 2 && writeAddress <= 4) ||
-        (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_SEC) ||
+        (writeAddress >= 9 && writeAddress <= MODBUS_REG_IMP_PERIOD_MIN) ||
         (writeAddress >= MODBUS_REG_RCAL_EEPROM_REAL_HI && writeAddress <= MODBUS_REG_RCAL_EEPROM_IMAGE_LO) ||
         (writeAddress >= MODBUS_REG_IMP_BASE_START && writeAddress <= MODBUS_REG_IMP_OFFSET))
     {

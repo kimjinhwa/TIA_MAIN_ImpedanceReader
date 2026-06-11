@@ -12,9 +12,6 @@
 * zener => 15V -> 18로 바꾸자.
 * zd1 -> 100Kohm으로 변경한다.
 
-
-
-
 ## 시스템설정
   * initEeprom
     EEPROM을 초기화 한다. 
@@ -229,3 +226,9 @@
     - 43 : Hour
     - 44 : Minute 
     - 45 : Second
+
+#Basic Setting
+* Basic setting Value from modbus image
+  ![Modbus value](./doc/modbusBasicSetting.png)
+* Basic setting Value from Web 
+  ![Web value](./doc/webBmsControlImage01.png)

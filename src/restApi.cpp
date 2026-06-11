@@ -47,7 +47,7 @@ extern float bootRcalVerifyMagnitudeGet(void);
 
 #define SESSION_COOKIE_NAME "session"
 #define SESSION_MAX_AGE_SEC (7u * 24u * 60u * 60u)
-#define BMS_IMP_PERIOD_DEFAULT_SEC 3600u
+#define BMS_IMP_PERIOD_DEFAULT_MIN 60u
 #define BMS_EEPROM_CHANGE_DEFAULT_PERCENT 3u
 #define BMS_IMP_STABLE_TOL_DEFAULT_PERCENT 3u
 #define BMS_IMP_POST_SAMPLES_DEFAULT 5u
@@ -510,13 +510,13 @@ static void handleApiNetworkConfigPost(void)
   ESP.restart();
 }
 
-static uint16_t bmsSanitizeImpedancePeriodSec(uint32_t sec)
+static uint16_t bmsSanitizeImpedancePeriodMin(uint32_t min)
 {
-  if (sec == 0)
-    return (uint16_t)BMS_IMP_PERIOD_DEFAULT_SEC;
-  if (sec > 65535u)
+  if (min == 0)
+    return (uint16_t)BMS_IMP_PERIOD_DEFAULT_MIN;
+  if (min > 65535u)
     return 65535u;
-  return (uint16_t)sec;
+  return (uint16_t)min;
 }
 
 static uint16_t bmsSanitizeImpedanceReadMax(uint32_t value)
@@ -643,7 +643,7 @@ static void applySystemDefaultsLocked(nvsSystemSet *cfg)
     cfg->baseImpendance[i] = 0;
   }
 
-  cfg->ImpedanceMeasurePeriod = (uint16_t)BMS_IMP_PERIOD_DEFAULT_SEC;
+  cfg->ImpedanceMeasurePeriod = (uint16_t)BMS_IMP_PERIOD_DEFAULT_MIN;
   cfg->ImpedanceFactor = (uint8_t)BMS_EEPROM_CHANGE_DEFAULT_PERCENT;
   cfg->ACVoltPP = (uint16_t)BMS_IMP_READ_MAX_DEFAULT;
   cfg->DCVolt = (uint16_t)BMS_IMP_STABLE_WINDOW_DEFAULT;
@@ -993,7 +993,7 @@ static void handleApiBmsConfigGet(void)
 
   nvsSystemSet cfg;
   copySystemConfigSnapshot(&cfg);
-  const uint16_t periodSec = bmsSanitizeImpedancePeriodSec(cfg.ImpedanceMeasurePeriod);
+  const uint16_t periodMin = bmsSanitizeImpedancePeriodMin(cfg.ImpedanceMeasurePeriod);
   const uint16_t readMax = bmsSanitizeImpedanceReadMax(cfg.ACVoltPP);
   const uint16_t stableWindow = bmsSanitizeImpedanceStableWindow(cfg.DCVolt, readMax);
   const uint8_t changePercent = bmsSanitizeImpedanceEepromChangePercent(cfg.ImpedanceFactor);
@@ -1013,7 +1013,7 @@ static void handleApiBmsConfigGet(void)
   bmsControl["ampereOffset"] = (int)modbusGetAmpereOffset();
   bmsControl["ampereGain"] = (unsigned)modbusGetAmpereGain();
   bmsControl["impedanceEepromChangePercent"] = (unsigned)changePercent;
-  bmsControl["impedanceMeasurePeriodSec"] = (unsigned)periodSec;
+  bmsControl["impedanceMeasurePeriodMin"] = (unsigned)periodMin;
   bmsControl["impedanceReadMax"] = (unsigned)readMax;
   bmsControl["impedanceStableWindow"] = (unsigned)stableWindow;
   bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;
@@ -1052,7 +1052,8 @@ static void handleApiBmsConfigPost(void)
 
   JsonObject cfgObj = reqDoc["bmsControl"].is<JsonObject>() ? reqDoc["bmsControl"].as<JsonObject>() : reqDoc.as<JsonObject>();
   const bool hasPercent = !cfgObj["impedanceEepromChangePercent"].isNull();
-  const bool hasPeriod = !cfgObj["impedanceMeasurePeriodSec"].isNull();
+  const bool hasPeriod = !cfgObj["impedanceMeasurePeriodMin"].isNull() ||
+                         !cfgObj["impedanceMeasurePeriodSec"].isNull();
   const bool hasReadMax = !cfgObj["impedanceReadMax"].isNull();
   const bool hasStableWindow = !cfgObj["impedanceStableWindow"].isNull();
   const bool hasStableTol = !cfgObj["impedanceStableTolPercent"].isNull();
@@ -1238,14 +1239,22 @@ static void handleApiBmsConfigPost(void)
   if (hasPeriod)
   {
     long v = 0;
-    if (!parseLongValue("impedanceMeasurePeriodSec", &v))
+    if (!cfgObj["impedanceMeasurePeriodMin"].isNull())
     {
-      sendJsonError(400, "impedanceMeasurePeriodSec invalid");
+      if (!parseLongValue("impedanceMeasurePeriodMin", &v))
+      {
+        sendJsonError(400, "impedanceMeasurePeriodMin invalid");
+        return;
+      }
+    }
+    else if (!parseLongValue("impedanceMeasurePeriodSec", &v))
+    {
+      sendJsonError(400, "impedanceMeasurePeriodMin invalid");
       return;
     }
     if (v < 1 || v > 65535)
     {
-      sendJsonError(400, "impedanceMeasurePeriodSec out of range(1..65535)");
+      sendJsonError(400, "impedanceMeasurePeriodMin out of range(1..65535)");
       return;
     }
     nextPeriod = (uint16_t)v;
@@ -1484,7 +1493,7 @@ static void handleApiBmsConfigPost(void)
     sendJsonError(500, "eeprom commit failed");
     return;
   }
-  const uint16_t periodSec = bmsSanitizeImpedancePeriodSec(systemDefaultValue.ImpedanceMeasurePeriod);
+  const uint16_t periodMin = bmsSanitizeImpedancePeriodMin(systemDefaultValue.ImpedanceMeasurePeriod);
   const uint16_t readMax = bmsSanitizeImpedanceReadMax(systemDefaultValue.ACVoltPP);
   const uint16_t stableWindow = bmsSanitizeImpedanceStableWindow(systemDefaultValue.DCVolt, readMax);
   const uint8_t changePercent = bmsSanitizeImpedanceEepromChangePercent(systemDefaultValue.ImpedanceFactor);
@@ -1510,7 +1519,7 @@ static void handleApiBmsConfigPost(void)
   bmsControl["ampereOffset"] = (int)modbusGetAmpereOffset();
   bmsControl["ampereGain"] = (unsigned)modbusGetAmpereGain();
   bmsControl["impedanceEepromChangePercent"] = (unsigned)changePercent;
-  bmsControl["impedanceMeasurePeriodSec"] = (unsigned)periodSec;
+  bmsControl["impedanceMeasurePeriodMin"] = (unsigned)periodMin;
   bmsControl["impedanceReadMax"] = (unsigned)readMax;
   bmsControl["impedanceStableWindow"] = (unsigned)stableWindow;
   bmsControl["impedanceStableTolPercent"] = (unsigned)stableTolPercent;

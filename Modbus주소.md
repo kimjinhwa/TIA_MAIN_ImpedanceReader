@@ -33,7 +33,7 @@
 | 15 | 내부저항 최대 읽기 횟수 (impedanceReadMax) | 1~120 |
 | 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하 |
 | 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
-| 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
+| 18 | 내부저항 읽기 주기(분) (impedanceMeasurePeriodMin) | 1~65535 |
 | 19 ~ 20 | 부팅 RCAL Real | int32 **milli** (HI=19, LO=20). FC03 읽기 전용. 표시 = 값/1000 |
 | 21 ~ 22 | 부팅 RCAL Image | int32 milli. FC03 읽기 전용 |
 | 23 ~ 24 | 부팅 RCAL Mag (mΩ) | int32 milli. FC03 읽기 전용. 부팅 검증 측정값 |
@@ -150,7 +150,7 @@ stateDiagram-v2
 | 15 | 내부저항 최대 읽기 횟수 (impedanceReadMax) | 1~120 |
 | 16 | 내부저항 안정 판단 윈도우 (impedanceStableWindow) | 2~20, readMax 이하로 보정 |
 | 17 | 내부저항 EEPROM 갱신 임계치(%) (impedanceEepromChangePercent) | 1~100 |
-| 18 | 내부저항 읽기 주기(초) (impedanceMeasurePeriodSec) | 1~65535 |
+| 18 | 내부저항 읽기 주기(분) (impedanceMeasurePeriodMin) | 1~65535 |
 | 25 ~ 26 | EEPROM RCAL Real | int32 milli (HI→LO 순 FC06 개별 쓰기). 쓰기 후 EEPROM 저장·AD5940 즉시 반영 |
 | 27 ~ 28 | EEPROM RCAL Image | int32 milli |
 | **50** | **내부저항 기준 측정 시작** | **값 = 1**: 1번 셀부터 스캔·EEPROM 저장 시작, **FC03[50]**을 1→…→N으로 증가, 완료 시 펌웨어가 **0** 설정. 진행 상태는 **FC03 주소 50**으로 읽기 |

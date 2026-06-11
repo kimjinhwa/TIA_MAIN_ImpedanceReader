@@ -20,7 +20,6 @@ extern BatDeviceInterface batDevice;
 extern _cell_value cellvalue[MAX_INSTALLED_CELLS];
 extern uint16_t startBatnumber;
 extern bool espLogIsEnabled(void);
-extern void espLogSetEnabled(bool enabled);
 extern uint8_t get485Address(void);
 
 static char TAG[] ="CLI" ;
@@ -152,7 +151,6 @@ void esplog_configCallback(cmd *cmdPtr)
 
   if (argVal == "on" || argVal == "1")
   {
-    espLogSetEnabled(true);
     esp_log_level_set("*", ESP_LOG_INFO);
     simpleCli.outputStream->printf("\r\n[esplog] on\r\n");
     return;
@@ -160,7 +158,6 @@ void esplog_configCallback(cmd *cmdPtr)
 
   if (argVal == "off" || argVal == "0")
   {
-    espLogSetEnabled(false);
     esp_log_level_set("*", ESP_LOG_NONE);
     simpleCli.outputStream->printf("\r\n[esplog] off\r\n");
     return;

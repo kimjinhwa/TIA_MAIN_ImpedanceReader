@@ -37,7 +37,7 @@
 #define MAIN_POWEROFF HIGH                       // 메인 전원 OFF 제어 레벨
 #define MAIN_POWERON LOW                         // 메인 전원 ON 제어 레벨
 #define WDT_TIMEOUT 100                          // Task Watchdog 타임아웃(초)
-#define IMP_MEASURE_PERIOD_DEFAULT_SEC 3600      // 내부저항 기본 측정 주기(초)
+#define IMP_MEASURE_PERIOD_DEFAULT_MIN 60u       // 내부저항 기본 측정 주기(분), 1시간
 #define IMP_EEPROM_CHANGE_DEFAULT_PERCENT 3u     // 내부저항 EEPROM 갱신 기본 임계치(%)
 #define IMP_READ_MAX_DEFAULT 60u                 // 내부저항 측정 기본 최대 샘플 수
 #define IMP_READ_MAX_MAX 120u                    // 내부저항 측정 최대 샘플 상한
@@ -92,7 +92,6 @@ extern SimpleCLI simpleCli;
 uint16_t startBatnumber=1;
 
 static volatile bool s_espLogEnabled = true;
-static bool s_lastEspLogEnabledApplied = true;
 static float s_bootRcalVerifyReal = 0.0f;
 static float s_bootRcalVerifyImage = 0.0f;
 static float s_bootRcalVerifyMag = 0.0f;
@@ -150,12 +149,6 @@ float bootRcalVerifyMagnitudeGet(void)
   return s_bootRcalVerifyMag;
 }
 
-void espLogSetEnabled(bool enabled)
-{
-  s_espLogEnabled = enabled;
-  esp_log_level_set("*", enabled ? ESP_LOG_INFO : ESP_LOG_NONE);
-  s_lastEspLogEnabledApplied = enabled;
-}
 
 static void applyBtCliStreams(bool useBluetooth)
 {
@@ -392,7 +385,7 @@ bool readnWriteEEProm(bool writeMode)
     systemDefaultValue.image_Cal = 35511.0f;
     systemDefaultValue.logLevel = ESP_LOG_INFO;
     systemDefaultValue.startBatnumber = 1;
-    systemDefaultValue.ImpedanceMeasurePeriod = 3600; /* 초, 0이면 런타임 기본 3600 */
+    systemDefaultValue.ImpedanceMeasurePeriod = IMP_MEASURE_PERIOD_DEFAULT_MIN; /* 분 */
     systemDefaultValue.ImpedanceFactor = IMP_EEPROM_CHANGE_DEFAULT_PERCENT; /* EEPROM 저장 임계치(%) */
     systemDefaultValue.ACVoltPP = IMP_READ_MAX_DEFAULT;                      /* 최대 읽기 횟수 */
     systemDefaultValue.DCVolt = IMP_STABLE_WINDOW_DEFAULT;                   /* 안정 판단 윈도우 */
@@ -414,7 +407,7 @@ bool readnWriteEEProm(bool writeMode)
   systemDefaultValue.userid[sizeof(systemDefaultValue.userid) - 1] = '\0';
   systemDefaultValue.userpassword[sizeof(systemDefaultValue.userpassword) - 1] = '\0';
   if (systemDefaultValue.ImpedanceMeasurePeriod == 0)
-    systemDefaultValue.ImpedanceMeasurePeriod = IMP_MEASURE_PERIOD_DEFAULT_SEC;
+    systemDefaultValue.ImpedanceMeasurePeriod = IMP_MEASURE_PERIOD_DEFAULT_MIN;
   if (systemDefaultValue.ImpedanceFactor == 0 || systemDefaultValue.ImpedanceFactor > 100)
     systemDefaultValue.ImpedanceFactor = IMP_EEPROM_CHANGE_DEFAULT_PERCENT;
   if (systemDefaultValue.ACVoltPP == 0 || systemDefaultValue.ACVoltPP > IMP_READ_MAX_MAX)
@@ -461,7 +454,9 @@ bool readnWriteEEProm(bool writeMode)
   ESP_LOGI(TAG, "Impedance EEPROM change percent: %u%%", (unsigned)systemDefaultValue.ImpedanceFactor);
   ESP_LOGI(TAG, "Impedance read max: %u", (unsigned)systemDefaultValue.ACVoltPP);
   ESP_LOGI(TAG, "Impedance stable window: %u", (unsigned)systemDefaultValue.DCVolt);
-  ESP_LOGI(TAG, "Impedance measure period: %us", (unsigned)systemDefaultValue.ImpedanceMeasurePeriod);
+  ESP_LOGI(TAG, "Impedance measure period: %u min (%lu s)",
+           (unsigned)systemDefaultValue.ImpedanceMeasurePeriod,
+           (unsigned long)((uint32_t)systemDefaultValue.ImpedanceMeasurePeriod * 60u));
   ESP_LOGI(TAG, "Impedance stable tolerance: %u%%", (unsigned)systemDefaultValue.VoltageFactor);
   ESP_LOGI(TAG, "Impedance post samples: %u", (unsigned)systemDefaultValue.TemperatureFactor);
   ESP_LOGI(TAG, "Impedance min valid: %.1f mOhm", (float)systemDefaultValue.RcalLoopCount / 10.0f);
@@ -554,17 +549,18 @@ void initCellValue()
 #define MUX_VOLTAGE_SETTLE_MS 1000
 
 /** 전압: 3초 주기, 방문당 버스트 평균. */
-#define CELL_VOLTAGE_INTERVAL_MS 3000
+#define CELL_VOLTAGE_INTERVAL_MS 1500
 #define CELL_VOLT_BURST_SAMPLES 5
 #define CELL_VOLT_BURST_GAP_MS 10
 
 /** changeAD5940ToMeasurement(false) 직후 readImp() 전 (ms). */
 #define AD5940_SETTLE_AFTER_OFF_MS 150
 
-/** 임피던스: EEPROM ImpedanceMeasurePeriod(초), 0 → 기본 1시간. */
+/** 임피던스: EEPROM ImpedanceMeasurePeriod(분), 0 → 기본 60분(1시간). */
 
+#define WIFI_AP_MODE 1
 /** 1: 3초마다 전압+임피던스 함께(충전 테스트). 0: 전압 3초 / 임피던스 주기 분리. */
-#define MEASURE_TEST_COMBINED_VZ 1
+#define MEASURE_TEST_COMBINED_VZ 0
 /** 1: Z 워밍업 매 회차 #01~#N 로그 (충전 모니터링). */
 #define IMP_MONITOR_LOG_ALL 1
 
@@ -662,7 +658,7 @@ void scanBatteriesAds1220(uint8_t nCells=MAX_INSTALLED_CELLS)
   for (unsigned i = 0; i < nCells; i++)
   {
     Mcp23s08_setOutput(mcpBatteryMuxPattern(i+1));
-    delay(5); /* 멀티플렉서·아날로그 안정화 */
+    delay(100); /* 멀티플렉서·아날로그 안정화 */
 
     const float vSample = Ads1220_readAveragedVoltageOnChannel(
         0, ADS1220_SAMPLES_PER_CELL, ADS1220_DR_TIMEOUT_MS, ADS1220_INTER_SAMPLE_US);
@@ -699,12 +695,17 @@ static float readCellVoltageOnce(void)
       0, 1, ADS1220_DR_TIMEOUT_MS, 0);
 }
 
+static uint16_t impedanceMeasurePeriodMin(void)
+{
+  uint16_t min = systemDefaultValue.ImpedanceMeasurePeriod;
+  if (min == 0)
+    min = IMP_MEASURE_PERIOD_DEFAULT_MIN;
+  return min;
+}
+
 static uint32_t impedanceMeasurePeriodMs(void)
 {
-  uint32_t sec = (uint32_t)systemDefaultValue.ImpedanceMeasurePeriod;
-  if (sec == 0)
-    sec = IMP_MEASURE_PERIOD_DEFAULT_SEC;
-  return sec * 1000UL;
+  return (uint32_t)impedanceMeasurePeriodMin() * 60UL * 1000UL;
 }
 
 static uint16_t impedanceReadMax(void)
@@ -961,11 +962,6 @@ static float readCellVoltageForBat(int batNo)
       s_cellVoltRing[idx], &s_cellVoltRingIdx[idx], &s_cellVoltRingCount[idx],
       &s_cellVoltRingSum[idx], vAvg);
   cellvalue[idx].voltage = vFiltered;
-
-  if (s_espLogEnabled){
-    ESP_LOGI(TAG, "cell %u V=%.4f (3s)", (unsigned)batNo, vFiltered);
-    outputStream->printf("cell %u V=%.4f (3s)\n", (unsigned)batNo, vFiltered);
-    }
   return vFiltered;
 }
 
@@ -1227,7 +1223,7 @@ static unsigned long lastImpedancePeriodMs = 0;
 static unsigned long lastNtcReadMs = 0;
 static unsigned long lastWifiWatchMs = 0;
 /** IN_TH1/IN_TH2 NTC 갱신 주기 */
-static const unsigned long NTC_READ_INTERVAL_MS = 2000;
+static const unsigned long EVERY_SECOND_MS = 1000;
 static const unsigned long WIFI_WATCH_INTERVAL_MS = 5000;
 static bool s_impedanceSessionActive = false;
 static uint16_t s_impedanceSessionCell = 1;
@@ -1336,9 +1332,9 @@ void setup()
   ESP_LOGI(TAG, "TEST: every %ums V+Z together, Z max %u reads (charger monitor)",
            (unsigned)CELL_VOLTAGE_INTERVAL_MS, (unsigned)impedanceReadMax());
 #else
-  ESP_LOGI(TAG, "Voltage interval %ums, impedance period %lus (EEPROM ImpedanceMeasurePeriod)",
+  ESP_LOGI(TAG, "Voltage interval %ums, impedance period %u min (EEPROM ImpedanceMeasurePeriod)",
            (unsigned)CELL_VOLTAGE_INTERVAL_MS,
-           (unsigned long)(impedanceMeasurePeriodMs() / 1000UL));
+           (unsigned)impedanceMeasurePeriodMin());
 #endif
   lastImpedancePeriodMs = millis();
   previousVoltageMs = millis();
@@ -1378,18 +1374,13 @@ void setup()
 
 void loop(void)
 {
-  if (s_lastEspLogEnabledApplied != s_espLogEnabled)
-  {
-    esp_log_level_set("*", s_espLogEnabled ? ESP_LOG_INFO : ESP_LOG_NONE);
-    s_lastEspLogEnabledApplied = s_espLogEnabled;
-  }
   now = millis();
   esp_task_wdt_reset();
 
   if (modbusBaselineScanIsActive())
   {
     modbusBaselineScanPoll();
-    if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
+    if ((now - lastNtcReadMs) >= EVERY_SECOND_MS)
     {
       lastNtcReadMs = now;
       ntcTemperatureUpdate();
@@ -1407,7 +1398,7 @@ void loop(void)
 #ifdef WIFI_AP_MODE
   if (restApiIsUploadInProgress())
   {
-    if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
+    if ((now - lastNtcReadMs) >= EVERY_SECOND_MS)
     {
       lastNtcReadMs = now;
       ntcTemperatureUpdate();
@@ -1467,42 +1458,42 @@ void loop(void)
       lastImpedancePeriodMs = now;
       s_impedanceSessionActive = true;
       s_impedanceSessionCell = 1;
-      ESP_LOGI(TAG, "impedance session start (period %lu s)", (unsigned long)(impPeriodMs / 1000UL));
-      outputStream->printf("impedance session start (period %lu s)\n", (unsigned long)(impPeriodMs / 1000UL));
+      ESP_LOGI(TAG, "impedance session start (period %u min)", (unsigned)impedanceMeasurePeriodMin());
+      outputStream->printf("impedance session start (period %u min)\n", (unsigned)impedanceMeasurePeriodMin());
     }
 
-    if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS)
-    {
+    if ((now - previousVoltageMs) >= (unsigned long)CELL_VOLTAGE_INTERVAL_MS) {
       const int bat = (int)voltageRotateBatNo;
       const unsigned idx = (unsigned)(bat - 1);
       const float v = readCellVoltageForBat(bat);
-      if (cellVoltageAllowsImpedanceV(v))
-        previousVoltageMs = now;
-      else
-      {
-        cellvalue[idx].impendance = 0.0f;
-        previousVoltageMs = 0;
-      }
+      // if (cellVoltageAllowsImpedanceV(v))
+      //   previousVoltageMs = now;
+      // else {
+      //   cellvalue[idx].impendance = 0.0f;
+      //   previousVoltageMs = now;
+      //   previousVoltageMs = 0;
+      // }
+      ntcTemperatureUpdate();
+      ctCurrentUpdate();
+      outputStream->printf("cell %2u V=%2.4f T1=%2.1f T2=%2.1f C  CT=%2.2f A (AIN2=%1.4f V)\n", 
+        (unsigned)bat, 
+        v,
+        ntcTemperatureC_x10[0] / 10.0f, 
+        ntcTemperatureC_x10[1] / 10.0f,
+        ctCurrentGetCalibratedAmps(), 
+          packCurrentAin2Volts);
+
       voltageRotateBatNo++;
       if (voltageRotateBatNo > measureActiveCellCount())
         voltageRotateBatNo = 1;
+      previousVoltageMs = now;
     }
   }
 #endif
 
-  if ((now - lastNtcReadMs) >= NTC_READ_INTERVAL_MS)
-  {
+  if ((now - lastNtcReadMs) >= EVERY_SECOND_MS) {
+    Mcp23s08_LEDToggle();
     lastNtcReadMs = now;
-    ntcTemperatureUpdate();
-    ctCurrentUpdate();
-    if (s_espLogEnabled){
-      ESP_LOGI(TAG, "NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)",
-               ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
-               ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
-      outputStream->printf("NTC TH1=%.1f C  TH2=%.1f C  CT=%.1f A (AIN2=%.4f V)\n",
-               ntcTemperatureC_x10[0] / 10.0f, ntcTemperatureC_x10[1] / 10.0f,
-               ctCurrentGetCalibratedAmps(), packCurrentAin2Volts);
-    }
   }
 
 #ifdef WIFI_AP_MODE

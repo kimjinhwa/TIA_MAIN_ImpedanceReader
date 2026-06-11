@@ -30,6 +30,11 @@ void Mcp23s08_writeReg(uint8_t reg, uint8_t val);
  */
 void Mcp23s08_setOutput(uint8_t pattern);
 
+/** LED ON/OFF 제어 */
+void Mcp23s08_LEDControl(bool on);
+
+/** LED TOGGLE */
+void Mcp23s08_LEDToggle(void);
 /**
  * 테스트: 각 GP마다 해당 비트만 LOW(나머지 HIGH), delayMs 간격, rounds 바깥 루프.
  */

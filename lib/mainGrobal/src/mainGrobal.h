@@ -85,7 +85,7 @@ typedef struct
     uint8_t ImpedanceFactor;
     uint8_t VoltageFactor;
     uint8_t TemperatureFactor;
-    uint16_t ImpedanceMeasurePeriod; /* 초, 0=기본 3600(1시간) */
+    uint16_t ImpedanceMeasurePeriod; /* 분, 0=기본 60(1시간) */
     uint8_t impedanceAutoUpdateEnabled; /* 0=수동(자동 EEPROM 갱신 안함), 1=자동 갱신 */
     uint16_t useHoleCt; /* FC03/FC06 reg 9: 0=센서없음, 그 외 CT 정격(A) */
     int16_t ampereOffset; /* FC03/FC06 reg 11: 전류 오프셋(0.1A 단위) */
