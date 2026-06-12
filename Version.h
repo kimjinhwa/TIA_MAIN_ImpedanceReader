@@ -1,4 +1,5 @@
-#define VERSION "1.0.22" // 내부저항 읽기 주기 기본값을 초단위에서 분단위로 변경함. 
+#define VERSION "1.0.23" // loop 전압 읽는 펑션을 변경함. 
+//#define VERSION "1.0.22" // 내부저항 읽기 주기 기본값을 초단위에서 분단위로 변경함. 
 //#define VERSION "1.0.21" // outputStream 사용하여 블루투스 출력을 일관성 있게 했다. 
 //#define VERSION "1.0.21" // myBlueTooth 삭제 
 //#define VERSION "1.0.20" // 전류읽기모니터와 모드버스를 맟춘다.

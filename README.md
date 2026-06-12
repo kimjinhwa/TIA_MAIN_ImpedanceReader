@@ -230,5 +230,4 @@
 #Basic Setting
 * Basic setting Value from modbus image
   ![Modbus value](./doc/modbusBasicSetting.png)
-* Basic setting Value from Web 
-  ![Web value](./doc/webBmsControlImage01.png)
+* Basic setting Value from Web ![Web value](./doc/webBmsControlImage01.png)
