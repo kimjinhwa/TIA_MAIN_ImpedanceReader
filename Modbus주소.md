@@ -52,9 +52,9 @@
 | 예시 | Real -33410.0 → int32 -33410000 → HI `0xFFDF`, LO `0xE3F0` |
 | FC06 | **25~28**(EEPROM Real/Image)만 쓰기. 19~24·29~30은 읽기 전용 |
 | 80 ~ 95 | 셀 내부저항 **기준값** (`baseImpendance[]`) | mΩ ×100 (`uint16`, 소수 2자리) |
-| 96 ~ 111 | 셀 내부저항 **보정값** (`impendanceCompensation[]`) | mΩ ×100 (`int16`, 2의 보수) |
-| 116 | 내부저항 전역 Gain (`impedanceGainPermille`) | per-mille (1000=1.000배, 100~4000) |
-| 117 | 내부저항 전역 Offset (`impedanceOffsetCentiMohm`) | mΩ ×100 (`int16`, 2의 보수) |
+| 100 ~ 119 | 셀 내부저항 **보정값** (`impendanceCompensation[]`, 셀1~20) | mΩ ×100 (`int16`, 2의 보수) |
+| 120 | 내부저항 전역 Gain (`impedanceGainPermille`) | per-mille (1000=1.000배, 100~4000) |
+| 121 | 내부저항 전역 Offset (`impedanceOffsetCentiMohm`) | mΩ ×100 (`int16`, 2의 보수) |
 
 #### 주소 50 — 진행 상태 (FC03 읽기 / FC06 쓰기)
 
@@ -155,9 +155,9 @@ stateDiagram-v2
 | 27 ~ 28 | EEPROM RCAL Image | int32 milli |
 | **50** | **내부저항 기준 측정 시작** | **값 = 1**: 1번 셀부터 스캔·EEPROM 저장 시작, **FC03[50]**을 1→…→N으로 증가, 완료 시 펌웨어가 **0** 설정. 진행 상태는 **FC03 주소 50**으로 읽기 |
 | 80 ~ 95 | 셀 내부저항 **기준값** (`baseImpendance[]`) 개별 쓰기 | mΩ ×100 (`uint16`) |
-| 96 ~ 111 | 셀 내부저항 **보정값** (`impendanceCompensation[]`) 개별 쓰기 | mΩ ×100 (`int16`, 2의 보수) |
-| 116 | 내부저항 전역 Gain (`impedanceGainPermille`) | per-mille (100~4000) |
-| 117 | 내부저항 전역 Offset (`impedanceOffsetCentiMohm`) | mΩ ×100 (`int16`, 2의 보수) |
+| 100 ~ 119 | 셀 내부저항 **보정값** (`impendanceCompensation[]`, 셀1~20) 개별 쓰기 | mΩ ×100 (`int16`, 2의 보수) |
+| 120 | 내부저항 전역 Gain (`impedanceGainPermille`) | per-mille (100~4000) |
+| 121 | 내부저항 전역 Offset (`impedanceOffsetCentiMohm`) | mΩ ×100 (`int16`, 2의 보수) |
 
 > **참고:** FC06 Broadcast (주소 0) 지원 - ANY_SERVER로 전송 시 모든 장치에 Modbus 주소 등 설정 가능
 

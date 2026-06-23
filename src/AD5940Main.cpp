@@ -29,8 +29,8 @@ Analog Devices Software License Agreement.
 
 #define MAX_LOOP_COUNT 100
 #define APPBUFF_SIZE 512
-#define CAL_TOTAL_SAMPLES 30
-#define CAL_SKIP_SAMPLES 15 /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
+#define CAL_TOTAL_SAMPLES 10
+#define CAL_SKIP_SAMPLES (CAL_TOTAL_SAMPLES/2)  /* 앞쪽은 WG/DFT 안정화 구간으로 버림 */
 
 static Print *outputStream;
 uint32_t AppBuff[APPBUFF_SIZE];
@@ -218,7 +218,7 @@ void AD5940BATStructInit(void)
   
   pBATCfg->FifoThresh = 2;      					/* 2 results in FIFO, real and imaginary part. */
 	
-	pBATCfg->SinFreq = 1004;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
+	pBATCfg->SinFreq = 710;									/* Sin wave frequency. THis value has no effect if sweep is enabled */
 	
 	pBATCfg->SweepCfg.SweepEn = bFALSE;			/* Set to bTRUE to enable sweep function */
 	pBATCfg->SweepCfg.SweepStart = 300.0f;		/* Start sweep at 1Hz  */
@@ -507,9 +507,9 @@ void AD5940_Main_init()
 /* Return RcalVolt magnitude 
 * 
 */
-void changeAD5940ToMeasurement(bool bChange)
+void changeAD5940ToVolMeasurement(bool bChange)
 {
-  if(bChange)
+  if(bChange)  //전압을 읽는 모드
   {
   setVoltageReadMode(VOLTAGEMODE);
   AppBATCfg.SinFreq = 190000.0f;
@@ -521,7 +521,7 @@ void changeAD5940ToMeasurement(bool bChange)
         ESP_LOGW(TAG, "Wakeup Error..retry...");
     }
   }
-  else
+  else  //임피던스를 읽는 모드
   {
     setVoltageReadMode(IMPEDANCEMODE);
     AppBATCtrl(BATCTRL_STOPNOW, 0);

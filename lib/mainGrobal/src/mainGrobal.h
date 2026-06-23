@@ -25,7 +25,7 @@
 #define A23S08_CS            GPIO_NUM_18 
 
 // 4.0보드에서 변경한다.
-#define OPAMP_OFF_PORT               GPIO_NUM_27 // NOTUSE
+#define OPAMP_OFF_PORT      GPIO_NUM_27 // NOTUSE
 
 // 4.0보드에서 변경한다.
 //#define PORT4               GPIO_NUM_21

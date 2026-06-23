@@ -41,6 +41,13 @@ function clampInt(v, min, max) {
     return n;
 }
 
+function setSaveBmsConfigEnabled(enabled) {
+    const saveBmsConfigBtn = document.getElementById("saveBmsConfigBtn");
+    if (saveBmsConfigBtn) {
+        saveBmsConfigBtn.disabled = !enabled;
+    }
+}
+
 async function loadBmsConfig() {
     try {
         setText("statusText", "BMS 설정 조회중...");
@@ -118,12 +125,24 @@ async function loadBmsConfig() {
         if (rcalRealInput && Number.isFinite(rcalReal)) rcalRealInput.value = rcalReal.toFixed(3);
         if (rcalImageInput && Number.isFinite(rcalImage)) rcalImageInput.value = rcalImage.toFixed(3);
         if (rcalMagInput && Number.isFinite(rcalMagMohm)) rcalMagInput.value = rcalMagMohm.toFixed(3);
+        else updateRcalMagPreview();
 
         setText("statusText", "BMS 설정 조회 완료");
+        setSaveBmsConfigEnabled(true);
     } catch (error) {
         console.log(error);
         setText("statusText", "BMS 설정 조회 네트워크 오류");
     }
+}
+
+function updateRcalMagPreview() {
+    const rcalRealRaw = Number(document.getElementById("rcalRealInput")?.value);
+    const rcalImageRaw = Number(document.getElementById("rcalImageInput")?.value);
+    const rcalMagInput = document.getElementById("rcalMagMohmInput");
+    if (!rcalMagInput || !Number.isFinite(rcalRealRaw) || !Number.isFinite(rcalImageRaw)) {
+        return;
+    }
+    rcalMagInput.value = Math.sqrt(rcalRealRaw * rcalRealRaw + rcalImageRaw * rcalImageRaw).toFixed(3);
 }
 
 async function saveBmsConfig() {
@@ -142,6 +161,8 @@ async function saveBmsConfig() {
     const minValidMohmRaw = Number(document.getElementById("impMinValidMohmInput")?.value || "0");
     const impGainRaw = Number(document.getElementById("impGainInput")?.value || "1");
     const impOffsetRaw = Number(document.getElementById("impOffsetMohmInput")?.value || "0");
+    const rcalRealRaw = Number(document.getElementById("rcalRealInput")?.value);
+    const rcalImageRaw = Number(document.getElementById("rcalImageInput")?.value);
     const cellGain = clampInt(cellGainRaw, 1, 65535);
     const cellOffset = clampInt(cellOffsetRaw, -32768, 32767);
     const useHoleCt = clampInt(useHoleCtRaw, 0, 65535);
@@ -157,8 +178,10 @@ async function saveBmsConfig() {
     const minValidMohm = Number.isFinite(minValidMohmRaw) ? Math.round(minValidMohmRaw * 10) / 10 : NaN;
     const impGain = Number.isFinite(impGainRaw) ? Math.round(impGainRaw * 1000) / 1000 : NaN;
     const impOffsetMohm = Number.isFinite(impOffsetRaw) ? Math.round(impOffsetRaw * 100) / 100 : NaN;
-    if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || autoUpdate === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000 || !Number.isFinite(impGain) || impGain < 0.1 || impGain > 4.0 || !Number.isFinite(impOffsetMohm) || impOffsetMohm < -327.68 || impOffsetMohm > 327.67) {
-        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 자동업데이트(0|1), 주기분(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000), 임피던스게인(0.1~4.0), 임피던스오프셋(-327.68~327.67mΩ)");
+    const rcalReal = Number.isFinite(rcalRealRaw) ? Math.round(rcalRealRaw * 1000) / 1000 : NaN;
+    const rcalImage = Number.isFinite(rcalImageRaw) ? Math.round(rcalImageRaw * 1000) / 1000 : NaN;
+    if (cellGain === null || cellOffset === null || useHoleCt === null || ampereOffset === null || ampereGain === null || percent === null || autoUpdate === null || period === null || readMax === null || stableWindow === null || stableWindow > readMax || stableTol === null || postSamples === null || !Number.isFinite(minValidMohm) || minValidMohm < 0.1 || minValidMohm > 1000 || !Number.isFinite(impGain) || impGain < 0.1 || impGain > 4.0 || !Number.isFinite(impOffsetMohm) || impOffsetMohm < -327.68 || impOffsetMohm > 327.67 || !Number.isFinite(rcalReal) || !Number.isFinite(rcalImage)) {
+        setText("statusText", "입력 범위: 셀게인(1~65535), 셀오프셋(-32768~32767), UseHoleCT(0~65535), 전류오프셋(-32768~32767), 전류게인(1~65535), 임계치(1~100), 자동업데이트(0|1), 주기분(1~65535), 최대읽기(1~120), 윈도우(2~20, <=최대읽기), 안정도(1~20), 추가샘플(1~20), 최소mΩ(0.1~1000), 임피던스게인(0.1~4.0), 임피던스오프셋(-327.68~327.67mΩ), EEPROM RCAL Real/Image(숫자)");
         return;
     }
 
@@ -184,7 +207,9 @@ async function saveBmsConfig() {
                     impedancePostStableSamples: postSamples,
                     impedanceMinValidMohm: minValidMohm,
                     impedanceGain: impGain,
-                    impedanceOffsetMohm: impOffsetMohm
+                    impedanceOffsetMohm: impOffsetMohm,
+                    rcalReal: rcalReal,
+                    rcalImage: rcalImage
                 }
             })
         });
@@ -399,6 +424,14 @@ window.addEventListener("load", async function () {
             saveBmsConfig();
         });
     }
+    const rcalRealInput = document.getElementById("rcalRealInput");
+    const rcalImageInput = document.getElementById("rcalImageInput");
+    if (rcalRealInput) {
+        rcalRealInput.addEventListener("input", updateRcalMagPreview);
+    }
+    if (rcalImageInput) {
+        rcalImageInput.addEventListener("input", updateRcalMagPreview);
+    }
     if (formatFsBtn) {
         formatFsBtn.addEventListener("click", function () {
             runSystemAction(
@@ -438,5 +471,6 @@ window.addEventListener("load", async function () {
         });
     }
     setBaselineStatus("대기중");
+    setSaveBmsConfigEnabled(false);
     setText("statusText", "조회 버튼으로 설정값을 읽어오세요");
 });

@@ -40,9 +40,10 @@ uint16_t modbusReg50BaseImpProgress = 0;
 #define MODBUS_REG_RCAL_EEPROM_MAG_HI 29u         // FC03: EEPROM RCAL Mag mΩ (계산값)
 #define MODBUS_REG_RCAL_EEPROM_MAG_LO 30u
 #define MODBUS_REG_IMP_BASE_START 80u             // FC03/FC06: 셀 기준저항(base) 시작 주소
-#define MODBUS_REG_IMP_COMP_START 96u             // FC03/FC06: 셀 보정값(compensation) 시작 주소
-#define MODBUS_REG_IMP_GAIN 116u                  // FC03/FC06: 전역 내부저항 gain(per-mille)
-#define MODBUS_REG_IMP_OFFSET 117u                // FC03/FC06: 전역 내부저항 offset(centi-mOhm, int16)
+#define MODBUS_REG_IMP_COMP_START 100u            // FC03/FC06: 셀 보정값(compensation) 시작 (셀1=100 … 셀20=119)
+#define MODBUS_REG_IMP_COMP_CELLS MAX_INSTALLED_CELLS
+#define MODBUS_REG_IMP_GAIN 120u                  // FC03/FC06: 전역 내부저항 gain(per-mille)
+#define MODBUS_REG_IMP_OFFSET 121u                // FC03/FC06: 전역 내부저항 offset(centi-mOhm, int16)
 #define MODBUS_REG_FC03_MAX MODBUS_REG_IMP_OFFSET // FC03 최대 주소
 #define MODBUS_IMP_READ_MAX_DEFAULT 60u           // 내부저항 최대 읽기 횟수 기본값
 #define MODBUS_IMP_READ_MAX_MAX 120u              // 내부저항 최대 읽기 횟수 상한
@@ -365,10 +366,9 @@ static void modbusFillFc03Holding(uint16_t *reg, unsigned count)
                        modbusRcalMagnitudeMohm(systemDefaultValue.real_Cal, systemDefaultValue.image_Cal));
   reg[MODBUS_REG_BASE_IMP_PROGRESS] = modbusReg50BaseImpProgress;
   for (uint16_t i = 0; i < MODBUS_MAX_CELLS; i++)
-  {
     reg[MODBUS_REG_IMP_BASE_START + i] = impCentiToModbusReg(systemDefaultValue.baseImpendance[i]);
+  for (uint16_t i = 0; i < MODBUS_REG_IMP_COMP_CELLS; i++)
     reg[MODBUS_REG_IMP_COMP_START + i] = (uint16_t)systemDefaultValue.impendanceCompensation[i];
-  }
   reg[MODBUS_REG_IMP_GAIN] = modbusSanitizeImpGainPermille(systemDefaultValue.impedanceGainPermille);
   reg[MODBUS_REG_IMP_OFFSET] = (uint16_t)systemDefaultValue.impedanceOffsetCentiMohm;
   dataSyncUnlockSystemConfig();
@@ -575,7 +575,8 @@ static bool modbusWriteHolding(uint16_t addr, uint16_t value, bool *needReboot)
       cellvalue[idx].baseImpendance = (int16_t)value;
       return true;
     }
-    if (addr >= MODBUS_REG_IMP_COMP_START && addr < (MODBUS_REG_IMP_COMP_START + MODBUS_MAX_CELLS))
+    if (addr >= MODBUS_REG_IMP_COMP_START &&
+        addr < (MODBUS_REG_IMP_COMP_START + MODBUS_REG_IMP_COMP_CELLS))
     {
       const uint16_t idx = (uint16_t)(addr - MODBUS_REG_IMP_COMP_START);
       const int16_t oldComp = systemDefaultValue.impendanceCompensation[idx];
